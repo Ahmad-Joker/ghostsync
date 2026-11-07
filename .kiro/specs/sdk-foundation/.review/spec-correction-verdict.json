@@ -1,0 +1,22 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "id": "NIT-1",
+      "severity": "NIT",
+      "title": "User-request regression test 3 (__proto__/constructor/toString remain own snapshot properties) is covered only implicitly",
+      "where": "tasks.md T9 / coverage matrix vs the original task's 8 enumerated regression tests; packages/kit/tests/projection.test.ts (preserved via T9.24)",
+      "problem": "The task enumerates 8 planned regression tests; item 3 (reserved-key own-property projection) is genuinely satisfied by AC-SDK-002-8 and the preserved projection.test.ts, but tasks.md names tests 1,2,4,5,6,8 explicitly while 3 and 7 are only subsumed under 'existing 37 tests'. Traceability-visibility gap, not a correctness gap.",
+      "fix": "Add one clause to tasks.md 9.8 (or 9.4a) noting the null-prototype own-property guarantee for __proto__/constructor/toString still holds under the two-map layout because getState() projects the unchanged root map via project(); or map user-request tests 3 and 7 to projection.test.ts + the preserved baseline suite (T9.24) in the coverage matrix."
+    },
+    {
+      "id": "NIT-2",
+      "severity": "NIT",
+      "title": "docs/progress.md top-of-file Git-setup header names a stale branch",
+      "where": "docs/progress.md § 'Git setup' ('Branch: feat/kiro-steering')",
+      "problem": "The file's opening Git-setup note still names feat/kiro-steering while the active branch for this work is feat/sdk-foundation (correctly used in every sdk-foundation section heading). Predates this correction; minor reader-confusion risk.",
+      "fix": "Optionally update the top 'Git setup' note to the current working branch or add a 'current branch: feat/sdk-foundation' clarifier. Hygiene only; out of strict MEDIUM-1 scope."
+    }
+  ],
+  "reviewDoc": "C:\\Users\\ahmad\\ghostsync\\.kiro\\specs\\sdk-foundation\\.review\\spec-correction-review.md"
+}

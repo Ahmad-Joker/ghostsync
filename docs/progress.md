@@ -2,8 +2,8 @@
 
 ## Git setup
 
-- Branch: `feat/kiro-steering` (current working branch; verified with `git branch --show-current`). The scaffold was committed on `main` as `c78e6f7` before this branch was cut.
-- Scaffold commit: `c78e6f7` (published) — current HEAD on `feat/kiro-steering`.
+- Branch: `feat/sdk-foundation` (current working branch; verified with `git branch --show-current`). History: the scaffold was committed on `main` as `c78e6f7`; the `feat/kiro-steering` branch (steering + core-sync-proof) was committed as `ab37419`; `feat/sdk-foundation` was cut from `ab37419` for the SDK foundation planning that follows.
+- Current HEAD: `ab37419` (core synchronization proof + Kiro specs). Scaffold commit: `c78e6f7` (published). The section headers below retain the branch each milestone was actually performed on.
 - Origin remote: `https://github.com/Ahmad-Joker/ghostsync.git` (fetch/push). Git remotes were not modified in this step.
 - Node.js: `v24.14.0` (verified with `node --version`).
 - pnpm: `10.34.9` (verified with `pnpm.cmd --version`).
@@ -274,8 +274,581 @@ No src defect surfaced against the Yjs reference — all receivers converged to 
 - Browser/offline-persistence (persistence after reload) remains separate future work; the
   export-then-restore path is the in-memory surrogate.
 
-## Next action
+## Next action (core-sync-proof)
 
 Reviewer re-runs the six commands and updates `.agents/tasks/core-sync-proof/review.json`. On verdict
 `APPROVED`, proceed to the next transfer tier (file transfer / capsule codec) per product steering.
 Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning (feat/sdk-foundation)
+
+Planning-only milestone for the reusable GhostSync SDK foundation. **No code, dependencies, builds,
+tests, commits, or pushes were performed in this step** — only three Markdown spec documents were
+created and this progress file was appended. Branch: `feat/sdk-foundation`.
+
+### Verified baseline
+
+- **Baseline commit:** `ab37419` ("feat: add verified core synchronization proof and Kiro specs").
+  Working tree clean except untracked `.agents/` (left untouched).
+- The prior `core-sync-proof` was **independently verified**: a browser-compatible scalar `Y.Map`
+  wrapper around Yjs, full-state binary updates carrying a separate `documentId`, fresh-replica
+  restoration with a new session `clientID`, lifecycle guards (post-`destroy` throws, idempotent
+  `destroy`), and **37 passing tests including six fast-check properties** (seed `424242`, 200 runs).
+- The real `packages/kit/src/*` and `packages/kit/package.json` were read at `ab37419` before planning;
+  the actual current signatures (`createKit().createReplica(documentId, seedBytes?)`, `Replica`
+  `set/delete/get/has/exportState/applyUpdate/getState/destroy`, and types `Scalar`/`State`/
+  `UpdateCarrier`/`ApplyOutcome`) are quoted verbatim in `design.md`.
+
+### SDK foundation status: PLANNED, not implemented
+
+Nothing in `packages/kit/src` or `packages/kit/tests` was changed. The spec describes additive work:
+
+- **Data model (selected + justified):** a top-level `Y.Map` named `entities` whose values are nested
+  `Y.Map<Scalar>` field maps (`Y.Map<Y.Map<Scalar>>`). Chosen over opaque per-entity JSON strings
+  (disallowed; kills field-level merge) and a flat composite-key map (leaks model into keys, non-atomic
+  entity delete). Field-level last-writer-wins; concurrent different-field edits both survive; same-field
+  conflict keeps exactly one submitted value (deliberate limitation — not every conflicting value is
+  preserved); entity deletion and edit-concurrent-with-deletion converge to one identical state.
+- **Public API additions (additive, backward-compatible):** `EntityAdapter<T>`, `Collection<T>`,
+  `SchemaIdentity`, `Fields`, `TransportUpdate`, `StateVector`, `TransportEnvelope`, `ChangeEvent`,
+  `ChangeListener`, `Unsubscribe`; new `Replica` methods `collection<T>()`, `exportStateVector()`,
+  `exportDiff()`, `subscribe()`; `ApplyOutcome` gains one `malformedUpdate` reason.
+- **Compatibility:** the baseline flat `set/delete/get/has/getState/exportState/applyUpdate/destroy`
+  surface stays, backed by a reserved default-collection facade, so the 37 existing tests and six
+  properties remain valid and unedited. One narrowing: `exportState()` returns `TransportUpdate`
+  (a structural superset of the baseline `UpdateCarrier`).
+- **Incremental sync:** `Y.encodeStateVector(doc)` + `Y.encodeStateAsUpdate(doc, remoteStateVector)`
+  alongside the unchanged full-state export; a legitimate no-op diff is non-empty Yjs bytes (zero-length
+  stays an invalid carrier).
+- **Notifications:** origin-tagged transactions (`LOCAL_ORIGIN`/`REMOTE_ORIGIN`) and a single
+  `doc`-level subscription that lets a consumer filter `origin==="remote"` to avoid feedback loops.
+- **Validation/errors:** per-layer responsibilities; foreign bytes are decoded in a scratch `Y.Doc`
+  first so a malformed update yields `malformedUpdate` with the live document unchanged (no assumption
+  that `Y.applyUpdate` rolls back). Validation is integrity/shape/identity only — not sender
+  authentication; adapter-level field validation of foreign bytes is a bounded, documented deferral.
+
+### Files created (exactly three) + updated (exactly one)
+
+- `.kiro/specs/sdk-foundation/requirements.md` (new) — REQ-SDK-001..007, NFR-SDK-001..006, EARS-style
+  acceptance criteria, scenarios, out-of-scope, and a requirement→task→test traceability table.
+- `.kiro/specs/sdk-foundation/design.md` (new) — overview, locked stack, baseline signatures quoted
+  from source, compatibility decision, concrete TypeScript API additions, structured-model + merge
+  semantics, identity, incremental sync, notifications, transport boundary, per-operation error table
+  with scratch-staging, FieldLedger + PatchBoard consumer examples, external-import instructions,
+  exact proposed file list, testability notes, and five unresolved decisions (U1–U5) each with a
+  recommended choice.
+- `.kiro/specs/sdk-foundation/tasks.md` (new) — ordered `- [ ]` checklist (T1–T10) linked to
+  requirement IDs, a coverage matrix, planned test cases per requirement, and the exact future
+  verification commands (`pnpm.cmd install --frozen-lockfile`; `pnpm.cmd -F @ghostsync/kit typecheck`;
+  `pnpm.cmd -F @ghostsync/kit test`; `pnpm.cmd -F @ghostsync/kit build`; a built-entry smoke-check
+  pattern). Every implementation task is pending; none is marked complete.
+- `docs/progress.md` (updated) — this section (prior milestone history preserved above).
+
+### Verification commands listed (NOT run — planning only)
+
+The future commands are recorded in `tasks.md` T10. No install, typecheck, test, or build was executed
+in this step; no planned test is claimed to have passed.
+
+### Proof lineage note
+
+This SDK foundation plan continues the **Node in-memory** proof lineage. Browser compatibility is a
+build-time requirement (no `node:` imports in `src`; library compiled without DOM libs), explicitly
+distinct from actual browser-executed evidence, which — together with IndexedDB persistence, offline
+app loading, service workers, file/QR capsules, checksums, and UI — remains future work.
+
+### Next action (sdk-foundation)
+
+Review `.kiro/specs/sdk-foundation/requirements.md`, `design.md`, and `tasks.md` at the
+design-and-tasks review gate **before any implementation**. The reviewer owns
+`.kiro/specs/sdk-foundation/.review/`. On an `APPROVED` verdict, begin implementation per the T1–T10
+task order. Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning — review-finding revision (feat/sdk-foundation)
+
+Planning-only revision pass. The first design-and-tasks review
+(`.kiro/specs/sdk-foundation/.review/review.json`) returned verdict `CHANGES_REQUESTED` with **2 MEDIUM
+and 4 NIT** findings. All six were addressed in the three spec docs; **no SDK source, tests, manifests,
+lockfile, steering, or apps were touched**. Still PLANNED, not implemented. Baseline remains `ab37419`.
+
+### Review findings addressed (all six)
+
+1. **MEDIUM — scratch-staging "live apply cannot throw" over-stated.** `design.md` now downgrades the
+   claim to an explicit assumption and makes AC-SDK-007-5 **unconditional**: the live `Y.applyUpdate`
+   is wrapped in `try/catch` with a pre-apply full-state snapshot that re-seeds the live doc on a throw
+   (no partial mutation). A new error-table row covers the defensive live-throw path; the rejection
+   guarantee text is updated; `requirements.md` AC-SDK-007-4/5 strengthened; `tasks.md` 7.3 implements
+   the snapshot-and-restore and 9.15 now plans a live-apply-throw test (not only a scratch-decode throw).
+2. **MEDIUM — no-feedback predicate inconsistent; termination not pinned.** All three docs now use one
+   predicate (re-broadcast only when `event.origin === "local"`). Termination is tied to AC-SDK-005-6
+   (an already-known remote apply is a no-op firing **zero** notifications → provable fixpoint);
+   `tasks.md` 9.12 now asserts the zero-notification mechanism, not merely that the loop stopped.
+3. **NIT — destroy error string.** `requirements.md` AC-SDK-005-5 now quotes the exact baseline string
+   `Error("GhostSync Kit: replica has been destroyed")`, matching design.md and the real `#assertAlive`.
+4. **NIT — `types: ["node"]` undocumented.** NFR-SDK-001 and design Technology stack now note it is a
+   type-checking-only convenience that adds no runtime `node:` dependency to `dist`; runtime
+   browser-compat is guaranteed by the 9.16 `no-node-imports` source scan.
+5. **NIT — `exportState` `.d.ts` narrowing unrecorded.** Design U2 now records the
+   `UpdateCarrier` → `TransportUpdate` narrowing as the single intentional type-level change,
+   source-compatible for value consumers, acceptable pre-1.0 (`version 0.0.0`).
+6. **NIT — traceability tables disagreed on REQ-SDK-003.** `requirements.md`'s REQ-SDK-003 row now maps
+   to `T3.4, T4`, matching the `tasks.md` coverage matrix (AC-SDK-003-2 is implemented by T3.4).
+
+### Files changed in this revision (planning docs only)
+
+- `.kiro/specs/sdk-foundation/requirements.md` — findings 2, 3, 4, 6, and AC-SDK-007-4/5 strengthening.
+- `.kiro/specs/sdk-foundation/design.md` — findings 1, 2, 4, 5, plus a "Responses to review findings"
+  section replacing the prior "no review exists yet" note.
+- `.kiro/specs/sdk-foundation/tasks.md` — findings 1 (tasks 7.3, 9.15) and 2 (task 9.12).
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+No implementation task was marked complete; every `tasks.md` item remains `- [ ]`. No dependencies were
+installed and no build or test was run — this remains a planning-only milestone in the Node in-memory
+proof lineage (browser/offline-persistence work remains future). The reviewer owns
+`.kiro/specs/sdk-foundation/.review/`; the loop stops when that `review.json` verdict is `APPROVED`.
+
+### Next action (sdk-foundation revision)
+
+Reviewer re-checks `requirements.md`, `design.md`, and `tasks.md` against the six findings and updates
+`.kiro/specs/sdk-foundation/.review/review.json`. On `APPROVED`, begin implementation per T1–T10.
+Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning — review-finding revision 2 (feat/sdk-foundation)
+
+Planning-only revision pass. The revision-2 design-and-tasks review
+(`.kiro/specs/sdk-foundation/.review/review.json`) confirmed all six round-1 findings **closed**, then
+surfaced three internal-contract conflicts in previously-untouched sections: verdict
+`CHANGES_REQUESTED` with **2 MEDIUM and 1 NIT**. All three were addressed in the spec docs; **no SDK
+source, tests, manifests, lockfile, steering, or apps were touched**. Still PLANNED, not implemented.
+Baseline remains `ab37419`.
+
+### Review findings addressed (all three)
+
+1. **MEDIUM — `Collection<T>` operation names conflict (requirements vs design/tasks).** `requirements.md`
+   AC-SDK-001-1 said the engine exposes `create`/`update`/`get`/`list`/`delete`, but the concrete
+   `Collection<T>` interface in `design.md` and all of `tasks.md` (3.3, 9.14) use
+   `put`/`get`/`list`/`delete`/`has` with a single create-or-overwrite `put`. Took the lower-risk fix:
+   AC-SDK-001-1 now reads "a typed `Collection<T>` whose `put`/`get`/`list`/`delete`/`has` operations
+   are typed in terms of the app's `T` (where `put(id, entity)` is create-or-overwrite)". Design and
+   tasks unchanged (the single-`put` model was already carried through them).
+2. **MEDIUM — state-vector carrier named `StateVectorRequest` in requirements but `StateVector` elsewhere.**
+   The one exported type now carries a single name, `StateVector`, across all four places:
+   `requirements.md` AC-SDK-006-1 / AC-SDK-006-4 and the `design.md` "Additive changes" bullet were
+   changed from `StateVectorRequest` to `StateVector`, matching the type definition, `TransportEnvelope`,
+   both `Replica` methods, and `tasks.md` 5.1/7.1.
+3. **NIT — `exportDiff` malformed-peer-state-vector behavior absent from the error table.** `design.md`
+   splits the combined export row so `exportDiff(remoteStateVector)` has its own row: it assumes a
+   well-formed peer `StateVector` from `exportStateVector()` (a same-process contract); a malformed
+   state vector is the caller's responsibility and out of scope this milestone. The same note was added
+   to the § Incremental synchronization `exportDiff` bullet, clarifying that untrusted foreign bytes
+   cross the trust boundary only at `applyUpdate`, where scratch-staging applies.
+
+### Files changed in this revision (planning docs only)
+
+- `.kiro/specs/sdk-foundation/requirements.md` — findings 1 (AC-SDK-001-1) and 2 (AC-SDK-006-1/4).
+- `.kiro/specs/sdk-foundation/design.md` — findings 2 ("Additive changes" bullet), 3 (error table +
+  incremental-sync note), plus a "Revision 2" entry in the "Responses to review findings" section.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+No implementation task was marked complete; every `tasks.md` item remains `- [ ]`. No dependencies were
+installed and no build or test was run — this remains a planning-only milestone in the Node in-memory
+proof lineage. The reviewer owns `.kiro/specs/sdk-foundation/.review/`; the loop stops when that
+`review.json` verdict is `APPROVED`.
+
+### Next action (sdk-foundation revision 2)
+
+Reviewer re-checks `requirements.md`, `design.md`, and `tasks.md` against the three findings and updates
+`.kiro/specs/sdk-foundation/.review/review.json`. On `APPROVED`, begin implementation per T1–T10.
+Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning — architecture-correction revision (revision 4, feat/sdk-foundation)
+
+Planning-only revision pass. The prior design-and-tasks review returned verdict `APPROVED` (2 NIT), but an
+**independent reviewer reproduced three real Yjs `13.6.33` data-loss/behavior defects** in the
+previously-approved nested-`Y.Map` design. This revision corrects the architecture in the three spec docs
+and this progress file. **No SDK source, tests, manifests, lockfile, steering, or apps were touched.**
+Still PLANNED, not implemented. Baseline remains `ab37419`. `.agents/` left untouched.
+
+### Ground-truth defects (reproduced with Yjs 13.6.33) and the corrections
+
+- **Defect A — nested-map identity loss.** Two replicas each doing `parent.set(id, new Y.Map())` offline do
+  NOT converge to one shared map; one side's fields are lost. **Correction:** the data model is replaced
+  from `Y.Map<Y.Map<Scalar>>` to **flat composite keys in the single top-level `root` `Y.Map`** — one leaf
+  key per field, encoding `SENTINEL "f" SEP esc(collection) SEP esc(entityId) SEP esc(field)` with a
+  NUL-introducer escape so the three reserved bytes (`\u0000`, `SENTINEL=\u0001`, `SEP=\u001f`) in any name
+  are unambiguous. Baseline flat keys stay **bare** top-level keys in `root`; `getState()` stays the flat
+  bare-key projection. No independently-created nested map is ever used. Concurrent same-id creation is
+  concurrent sibling-key sets that merge field-level, so no side's fields are lost.
+- **Defect B — full-rewrite clobber.** Rewriting all fields of an entity overwrites a concurrent edit to a
+  different field. **Correction:** `put` is a **changed-fields diff** (REQ-SDK-003A) — validate, then in one
+  transaction write only changed leaf keys, delete omitted-field keys, and perform NO write for unchanged
+  fields. Regression: A changes only `title`, B changes only `priority`; after exchange both survive.
+- **Defect C — no-op still fires `afterTransaction`.** An empty no-op update fires `afterTransaction` once
+  and `update` zero times. **Correction:** the false "Yjs never emits for a no-op" claim is removed;
+  observable change is derived from the transaction's **`root` key delta** (keys added/updated/deleted). A
+  no-op (empty delta) notifies ZERO subscribers even though `afterTransaction` fired.
+
+### Other corrections folded in (kept consistent across all three docs)
+
+- **Schema identity travels with the data:** `SchemaIdentity` is recorded as a reserved meta leaf key
+  (`SENTINEL "m" SEP esc(collection)`) in `root`, so it is in exported bytes and re-derivable on remote
+  import; mismatch is detectable after export/restore and after import (not a process-local registry).
+- **State-vector / `applyUpdate` boundary:** `applyUpdate` gains an ordered boundary — shape → **kind gate**
+  (reject `kind:"stateVector"` and unknown kinds BEFORE treating bytes as an update) → documentId → scratch
+  decode → live merge. `exportDiff(remoteStateVector: unknown)` validates the peer carrier and returns
+  distinguishable `ExportDiffResult` reasons (`invalidStateVector` / `documentIdMismatch`) with no mutation
+  and no notification. A valid no-op diff is non-empty bytes; zero-length stays `invalidCarrier`.
+- **Rejected-apply recovery lifecycle:** the live merge uses **staging-on-copy + swap** — build on a staging
+  doc seeded from a pre-apply snapshot, commit by swapping it in as the live doc (destroying the old doc and
+  **reconnecting the single `afterTransaction` observer**; subscriptions and `Collection` handles survive
+  because they resolve the doc lazily), or discard the staging doc on a throw. Guarantee is bounded HONESTLY
+  to the observable projection; a full-state snapshot is NOT assumed to capture pending out-of-order updates.
+  Subscriber exceptions are isolated (wrapped dispatch) so a listener throw is never reported as a malformed
+  update. Failure-path tests cover continued editing + sync AFTER a rejected apply.
+- **Documentation accuracy:** the "guaranteed browser-compatible" claim is downgraded — the no-`node:`-imports
+  scan is a STATIC check, not browser-runtime proof; browser execution evidence is explicitly PENDING. The
+  `ApplyOutcome` union gaining `"malformedUpdate"` is recorded as a potential MINOR breaking change for an
+  exhaustive consumer `switch`, not universally source-compatible.
+- **Prior `APPROVED` NITs also fixed:** REQ-SDK-007 traceability row now `T3, T7`; REQ-SDK-006 intro prose
+  drops "state-vector request".
+
+### Preserved baseline
+
+Baseline flat fields stay bare keys in the existing `root` `Y.Map` (name unchanged); `getState()` stays the
+flat projection and is NOT redefined to return all entities (structured snapshots come from
+`Collection#get`/`list`). A planned `baseline-fixture.test.ts` restores bytes produced by the `ab37419`
+build and asserts the flat projection round-trips. All 37 existing tests / 14 files / six fast-check
+properties remain in scope, unedited (NFR-SDK-005). Property reporting keeps seed `424242` / 200 runs via
+`tests/fc-report.ts` with real `RunDetails`.
+
+### Files changed in this revision (planning docs only)
+
+- `.kiro/specs/sdk-foundation/requirements.md` — rewritten to the composite-key model: new REQ-SDK-003A
+  (changed-fields put), expanded REQ-SDK-002 (concurrent create, reused id, escaping), REQ-SDK-003 (schema
+  travels in-doc), REQ-SDK-005 (key-delta notifications + listener isolation), REQ-SDK-007 (kind boundary,
+  exportDiff rejection, honest recovery bound), NFR-SDK-001/004 doc-accuracy fixes, explicit limitations,
+  and corrected traceability.
+- `.kiro/specs/sdk-foundation/design.md` — new § Storage layout (composite-key grammar + escaping), rewritten
+  merge semantics (defect-A guard), changed-fields `put`, in-doc schema identity, validated `exportDiff`,
+  kind-gated/staging-and-swap `applyUpdate`, key-delta notifications, updated error table and API signatures
+  (`exportDiff(unknown): ExportDiffResult`), U1–U7 decisions, and a "Responses to review findings" section
+  recording the A/B/C corrections and the two prior NITs.
+- `.kiro/specs/sdk-foundation/tasks.md` — tasks updated to the composite-key codec (T3.1), changed-fields
+  put (T3.3), in-doc schema identity (T3.4), validated exportDiff (T5.2), key-delta notifications +
+  listener isolation (T6.3/6.4), kind-gated staging-and-swap apply (T7.3), and new planned tests
+  (`concurrent-create`, `key-escaping`, `put-changed-fields`, `schema-identity`, `apply-kind-boundary`,
+  `export-diff-rejection`, `baseline-fixture`, continued-edit-after-reject). Every task pending; no planned
+  test claimed passing.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+No implementation task was marked complete; every `tasks.md` item remains `- [ ]`. No dependencies were
+installed and no build or test was run — this remains a planning-only milestone in the Node in-memory proof
+lineage (browser/offline-persistence work remains future, browser execution pending). The reviewer owns
+`.kiro/specs/sdk-foundation/.review/`.
+
+### Next action (sdk-foundation revision 4)
+
+Independent reviewer re-checks `requirements.md`, `design.md`, and `tasks.md` against defects A/B/C and the
+boundary/recovery/doc-accuracy corrections, and updates `.kiro/specs/sdk-foundation/.review/`. On
+`APPROVED`, begin implementation per T1–T10. Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning — MEDIUM-1 correction (revision 5, two separate top-level maps, feat/sdk-foundation)
+
+Planning-only, documentation-only revision pass. The architecture-correction review
+(`.kiro/specs/sdk-foundation/.review/spec-correction-verdict.json`) returned verdict `CHANGES_REQUESTED`
+with **1 MEDIUM and 2 NITs** against revision 4. It confirmed defects A/B/C were reproduced and the
+corrections held, but blocked on MEDIUM-1. All three findings are addressed in the three spec docs plus a
+dated supersession note in the historical review artifact. **No SDK source, tests, manifests, lockfile,
+steering, or apps were touched.** Still PLANNED, not implemented. Baseline remains `ab37419`. `.agents/`
+left untouched.
+
+### The architecture decision applied
+
+Revision 4 placed the flat composite structured keys in the **same** top-level `root` `Y.Map` as the
+legacy scalar keys, then needed a bare-vs-structured discriminator so `getState()` would project only the
+legacy keys. MEDIUM-1 found that discriminator self-contradictory (three disagreeing definitions) and
+undefined where a legacy user key is byte-identical to a structured field key. The user's decided
+architecture — applied verbatim here — uses **two separate top-level shared maps in the same `Y.Doc`**:
+
+- **`doc.getMap("root")`** — the LEGACY scalar map, preserved EXACTLY as `ab37419`: `set/get/has/delete`
+  operate directly on it with bare keys; `getState()` projects EVERY key in it (reuse `src/state.ts`
+  `project` as-is — no sentinel filtering, no escaping, no reserved prefixes, no migration, no
+  classification); the baseline byte fixture still restores; and NO key is ever reserved or rejected,
+  including a key beginning with the sentinel char or byte-identical to a structured field key. The
+  previously-proposed restriction on `\u0001`-prefixed legacy keys is removed.
+- **`doc.getMap("ghostsync:records:v1")`** — the STRUCTURED records map holding the flat composite-key
+  records with collision-safe component encoding, collection isolation, field-level merge, `SchemaIdentity`
+  meta records, and deletion rules. All internal prefixes/sentinels/escaping apply ONLY inside this map.
+
+Both maps belong to the same `Y.Doc`, so `Y.encodeStateAsUpdate(doc)` (full) and
+`Y.encodeStateAsUpdate(doc, sv)` (differential) export/import BOTH maps automatically. **Map membership —
+not a key-shape predicate — decides which API owns a key.** No nested per-entity maps (defect A); no
+`__default__` map.
+
+### Review findings addressed (all three)
+
+1. **MEDIUM-1 — self-contradictory bare-vs-structured discriminator. Addressed by removing it entirely.**
+   Every conflicting predicate was replaced with the two-map layout: design § Storage layout item 1's
+   "first char ≠ `SENTINEL`", the `SENTINEL` paragraph's "deterministic re-derivation; see below" dangling
+   reference, and tasks 3.1/3.2's dual predicates are all gone. `getState()` reuses `project(root)`
+   unchanged; structured reads go through `Collection` against the records map; the legacy-key reservation
+   was removed. New regression tests specify the collision cases (test 1: a legacy `root` key byte-identical
+   to a structured field key coexists, each API reads its own value; test 2: sentinel-prefixed legacy keys
+   remain valid). New AC-SDK-002-10 / AC-SDK-002-11 pin the behavior.
+2. **NIT-1 — dual key-delta accessor wording. Addressed.** Standardized on `transaction.changed.get(map)`
+   (`Set<string|null>`; undefined/empty = no change) for `doc.getMap("root")` and
+   `doc.getMap("ghostsync:records:v1")`; dropped the "/ the keys delta" alternative. Notifications now
+   inspect BOTH maps and emit AT MOST ONE notification per qualifying transaction (defect C honored).
+3. **NIT-2 — stale "re-seed-on-throw" recovery language in `.review/review.md`. Addressed (docs hygiene).**
+   A dated supersession note was added to the revision-3 `.review/review.md` labelling its re-seed-on-throw
+   description as superseded by staging-and-swap (U6). The review history is preserved (no deletion).
+
+### Preserved intact from prior revisions
+
+Changed-fields `put` (defect B), key-delta-derived notifications (defect C), the kind-gated
+state-vector/`applyUpdate` boundary with distinguishable reasons and no mutation/notification, and the
+bounded staging-and-swap apply/recovery (U6) are all unchanged except for extending the delta inspection to
+both maps. The 37 existing tests / 14 files / six fast-check properties stay unedited (NFR-SDK-005); seed
+`424242` / 200 runs via `tests/fc-report.ts` preserved.
+
+### Files changed in this revision (permitted docs only)
+
+- `.kiro/specs/sdk-foundation/requirements.md` — revision-5 header; two-map Summary/Definitions; REQ-SDK-002
+  two-map model + new AC-SDK-002-10/11; AC-SDK-002-8/9 scoped; schema-identity meta key in the records map
+  (AC-SDK-003-2); REQ-SDK-005 both-map key-delta notifications; NFR-SDK-005 and Assumptions updated;
+  traceability row updated.
+- `.kiro/specs/sdk-foundation/design.md` — revision-5 header; Overview + Compatibility rewritten to two
+  maps; § Storage layout rewritten (two maps, codec scoped to the records map, discriminator and dangling
+  reference removed); merge/enumeration/projection/identity updated; Lifecycle notifications use the single
+  `transaction.changed.get(map)` accessor over both maps; staging-and-swap delta over both maps; U1/U3
+  updated; new "Architecture-correction revision 5" responses subsection; proposed-file notes updated.
+- `.kiro/specs/sdk-foundation/tasks.md` — revision-5 header; T3.1 codec scoped (no predicate exported),
+  T3.2 direct-on-`root` with no filtering/reservation, T3.3/T3.4 on the records map; T6.3 both-map
+  one-notification rule; T7.3 both-map delta; new 9.4a `two-map-layout.test.ts`; 9.8 extended with collision
+  tests 1 and 2; 9.15/9.16 both-map notification paths; 9.22 baseline-fixture note; coverage matrix updated.
+- `.kiro/specs/sdk-foundation/.review/review.md` — dated supersession note (NIT-2); history preserved.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+No implementation task was marked complete; every `tasks.md` item remains `- [ ]`. No dependencies were
+installed and no build or test was run — this remains a planning-only milestone in the Node in-memory proof
+lineage. No planned application test is claimed to have passed.
+
+### Next action (sdk-foundation revision 5)
+
+Reviewer re-checks `requirements.md`, `design.md`, and `tasks.md` against MEDIUM-1 / NIT-1 / NIT-2 and the
+two-map layout, and updates `.kiro/specs/sdk-foundation/.review/`. On `APPROVED`, begin implementation per
+T1–T10. Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation IMPLEMENTATION (feat/sdk-foundation)
+
+The approved two-map SDK foundation is now **implemented, tested, built, and smoke-checked** against the
+built entry. This is still a **Node in-memory** milestone; browser runtime remains UNVERIFIED (static
+no-`node:`-imports scan only). Branch `feat/sdk-foundation`. Baseline `ab37419` unchanged. **Nothing was
+committed or pushed.** `.agents/` untouched; untracked files preserved.
+
+Legend below distinguishes **implemented** (code written), **tested** (a real test asserts it and passed),
+and **independently verified** (a verification command exit code or a decoded-bytes check confirms it).
+
+### Files changed
+
+New `src` (implemented):
+- `packages/kit/src/adapter.ts` — `SchemaIdentity`, `Fields`, `EntityAdapter<T>`, `assertSchemaIdentity`,
+  `schemaIdentityEqual`.
+- `packages/kit/src/keys.ts` — composite-key codec for the records map only: `RECORDS_MAP`,
+  `SENTINEL`/`SEP`, NUL-introducer `esc`/`unesc`, `fieldKey`/`metaKey`/`fieldKeyPrefix`/`parseFieldKey`,
+  and `collectionId(app, entityType)` (clarification 1). No bare-vs-structured predicate.
+- `packages/kit/src/collection.ts` — `Collection<T>`, `GetResult<T>`, `IncompleteRecordError`,
+  `CollectionHost` (lazy doc resolution), `CollectionImpl` (changed-fields `put`, controlled reads,
+  schema record/recheck, delete-in-one-transaction).
+
+Modified `src` (additive; existing behavior preserved):
+- `packages/kit/src/types.ts` — added `StateVector`, `TransportUpdate`, `TransportEnvelope`,
+  `ExportDiffResult`, `ChangeEvent`, `ChangeListener`, `Unsubscribe`; extended `ApplyOutcome` with
+  `malformedUpdate`; extended `Replica` (`collection`/`exportStateVector`/`exportDiff`/`subscribe`,
+  `exportState` narrowed to `TransportUpdate`). `getState()` stays the flat `root` projection.
+- `packages/kit/src/replica.ts` — `LOCAL_ORIGIN`/`REMOTE_ORIGIN` symbols; all mutations in
+  `doc.transact(fn, origin)`; single `afterTransaction` observer deriving change from the combined key
+  delta of both maps; kind-gated, snapshot-and-swap `applyUpdate`; `exportStateVector`/`exportDiff` with
+  carrier validation; `subscribe` with exception-isolated dispatch; `collection<T>()` via a lazy
+  `CollectionHost`. Baseline `set/delete/get/has/getState` still operate directly on `root`.
+- `packages/kit/src/index.ts` — re-export the new public surface.
+
+New tests (25 files) under `packages/kit/tests/` and `packages/kit/tests/fixtures/` (see totals below).
+`packages/kit/tests/fixtures/baseline-ab37419.ts` carries the REAL baseline bytes + provenance;
+`packages/kit/tests/fixtures/adapters.ts` carries the FieldLedger + PatchBoard adapters.
+
+Spec docs reconciled to the implementation + six clarifications:
+`.kiro/specs/sdk-foundation/{requirements,design,tasks}.md`. `docs/progress.md` — this section.
+
+The 14 baseline test files were NOT modified. No `package.json`, lockfile, `tsconfig*`, `vitest*`,
+steering, or app changes.
+
+### Key decisions
+
+- **Collection id tuple encoding (clarification 1):** `collectionId = esc(app) + SEP + esc(entityType)`
+  using the composite-key escaping, so two distinct tuples can never collide. `schemaVersion` lives in
+  the persisted meta key, not the namespace. Schema components validated at runtime.
+- **Pending-updates handling (clarification 2):** Yjs 13.6.33 `encodeStateAsUpdate` includes pending
+  structs/ds; the snapshot seed carries them across the swap, so pending out-of-order updates are
+  PRESERVED. The prior "loss acceptable" claim was removed from all three docs. Verified by a dependency
+  regression (later diff before prerequisite, across an intervening swap) + delete-before-insert +
+  snapshot/restore. Fresh `clientID` per `new Y.Doc()` is preserved; never copied.
+- **Apply lifecycle (clarification 3):** `applyUpdate` uses **direct-apply + snapshot-rollback**. It
+  captures a committed pre-apply snapshot, DETACHES the change observer (so no mid-throw partial state is
+  dispatched), attaches a one-shot delta probe, and applies the foreign bytes directly to the live doc;
+  on a throw it rebuilds the committed doc from the snapshot and reattaches the observer (committed
+  projection unchanged); on success it reattaches the observer and fires one remote notification iff a key
+  changed. Listeners and `Collection` handles are preserved (handles resolve the committed doc lazily). A
+  subscriber throw never turns a successful apply into a rejection. **A staging-copy-then-swap and a
+  separate empty scratch decode were both dropped for performance** — each did a full snapshot +
+  `new Y.Doc()` + extra apply on EVERY apply (~6×/~2× cost) and pushed the unmodified baseline
+  `merge-invariant.property.test.ts` past its 5s per-test timeout under parallel worker load. The
+  observable-projection guarantee is identical (observer detached ⇒ no mid-throw dispatch; snapshot
+  rollback ⇒ committed projection deep-equal to before on any `ok:false`).
+- **Incomplete-record error (clarification 4):** reads run `fromFields` + `validate`; `getResult` returns
+  `{ ok:false, reason:"invalidRecord", fields }` and `get` throws `IncompleteRecordError`, preserving the
+  underlying fields; `list` skips invalid records.
+- **Schema recheck (clarification 5):** compatibility is rechecked on every `Collection` op (not only at
+  open), so a conflicting version imported via `applyUpdate` after a handle exists is caught
+  deterministically.
+- **put stale-form note (clarification 6):** changed-fields diff vs CURRENT LOCAL state; a stale full
+  entity can still overwrite; no stale-form safety is promised.
+
+### Verification commands and results (Windows PowerShell, from workspace root; exit = `$LASTEXITCODE`)
+
+| # | Command | Exit | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date; no dependency/lockfile change |
+| 2 | `pnpm.cmd -F @ghostsync/kit typecheck` | 0 | strict typecheck clean (src + tests + config) |
+| 3 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **39 files / 102 tests passed, 0 failed** |
+| 4 | `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emits 8 `.js` + 8 `.d.ts`; no test files |
+| 5 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings) |
+| 6 | `git status --short --branch` | 0 | 14 baseline test files unchanged; `.agents/` + untracked preserved; nothing committed |
+| 7 | built-entry smoke (`node` against `dist/index.js`, then deleted) | 0 | **SMOKE PASS** |
+
+Test totals: **39 test files, 102 tests, 0 failed** (14 baseline files / 37 tests unchanged + 25 new
+files / 65 new tests). No `.skip`/`.todo`/`.only`; no weakened assertions.
+
+### Per-property fast-check RunDetails (actual, printed by the run; seed 424242, 200 runs)
+
+| Property (name as printed) | seed | numRuns | numSkips | numShrinks | result |
+| --- | --- | --- | --- | --- | --- |
+| REQ-002 two-way convergence (disjoint A::/B:: namespaces) | 424242 | 200 | 0 | 0 | PASS |
+| AC-003-1 concurrent same-key resolves to a submitted value | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-1 idempotency (re-apply is a no-op) | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-2 commutativity (order independence) | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-3 grouping (mergeUpdates equals sequential) | 424242 | 200 | 0 | 0 | PASS |
+| REQ-004 fresh receivers converge vs Yjs reference (orig/perm/dup/merged) | 424242 | 200 | 0 | 0 | PASS |
+| REQ-SDK-002 structured convergence (concurrent same-id) | 424242 | 200 | 0 | 0 | PASS |
+| REQ-SDK-004 diff convergence equals full-state | 424242 | 200 | 0 | 0 | PASS |
+
+Six baseline properties + two new SDK properties = 8 properties, all PASS, all via `tests/fc-report.ts`
+(real `RunDetails`, bounded generators).
+
+### Baseline-fixture provenance (REAL, independently verified)
+
+- The fixture bytes in `packages/kit/tests/fixtures/baseline-ab37419.ts` are a genuine `exportState().bytes`
+  produced by the **baseline build at commit `ab3741949a5565196b6c8405dce9d1720810eade`**.
+- Generated by `git worktree add --detach <temp> ab37419` into an isolated temp dir OUTSIDE the working
+  tree, `pnpm install --frozen-lockfile` + `pnpm -F @ghostsync/kit build` there, then a one-off Node
+  script imported the BASELINE `dist/index.js`, wrote known scalar keys (`alpha=1, beta="two",
+  gamma=true, delta=null, epsilon=3.5`), and printed base64 of `exportState().bytes`. Node v24.14.0,
+  pnpm 10.34.9, 2026-11-08.
+- The temp worktree was removed (`git worktree remove --force`) and the temp dir deleted; the main
+  working tree was never switched or reset. `baseline-fixture.test.ts` restores the real bytes into a
+  fresh current-build replica and asserts `getState()` deep-equals the known flat state — **PASS**
+  (independently confirms `root`'s encoded structure is unchanged by adding the records map).
+
+### Built-entry smoke result (independently verified)
+
+A temporary `smoke.mjs` imported the BUILT `dist/index.js` public entry and asserted: both the FieldLedger
+and PatchBoard adapters via the same SDK; legacy (root) vs structured (records map) isolation including a
+legacy key byte-identical to a structured field key; two-way DIFFERENTIAL sync (state vector + diff)
+converging; notification origins (local for local writes, remote once for an applied update, ZERO for a
+re-applied no-op). Printed `SMOKE PASS`, exit 0. The script was then DELETED (not left in the repo).
+
+### Known limitations (unchanged scope)
+
+- Browser runtime execution remains UNVERIFIED — only the static no-`node:`-imports scan
+  (`no-node-imports.test.ts`) covers NFR-SDK-001.
+- No capsule codec, checksums, size bounds, QR, IndexedDB/service workers, offline app loading, or UI
+  (all future tiers). A checksum detects corruption; it does not authenticate the sender. Caller metadata
+  (documentId/app/schemaVersion) identifies intent only; it does not authenticate bytes or sender.
+- Adapter-level field validation of FOREIGN bytes is deferred to the capsule/schema tier (a peer could
+  introduce a field the local adapter would reject on a local write) — a stated, bounded limitation.
+
+No substantive architectural blocker remains: the pending-update/dependency case converges (verified),
+no dependency was added, and all four pnpm commands exit 0.
+
+### Next action (sdk-foundation implementation)
+
+One final code review of this implementation + diff. Nothing was committed or pushed.
+
+## sdk-foundation — independent-review corrections round (feat/sdk-foundation)
+
+A code+test correction round applying three independent-review findings to the implemented SDK Kit.
+The two-map architecture (legacy `root` + structured `ghostsync:records:v1`) and the direct-apply +
+snapshot-rollback-on-throw recovery strategy are UNCHANGED. Still a Node in-memory proof; no new
+dependency, manifest, lockfile, tooling, steering, or app change. Nothing committed or pushed;
+`.agents/` untouched. The prior `APPROVED` verdict and earlier findings are left in the record.
+
+### Corrections implemented
+
+1. **Correction 1 — schema recheck on EVERY collection operation.** Before this round only `put`
+   (and `open`) rechecked schema identity; `get`/`getResult`/`list`/`delete`/`has` did NOT, so a
+   handle opened at v1 kept serving reads/enumeration/deletes after a causally-newer v2 meta arrived.
+   This round ADDS the recheck to the read/enumeration/delete paths (and the new `listResults`), so
+   every public `Collection` operation calls `#assertSchemaCompatible()` BEFORE doing any work and a
+   mismatch raises the documented schema-mismatch `Error` — never degraded into `absent`/`undefined`
+   or `invalidRecord`. A delete through an incompatible handle throws before any scan/transaction, so
+   it neither mutates nor notifies. The guard now validates the PARSED meta (`assertSchemaIdentity` on
+   the `JSON.parse` result) before comparing, so corrupt persisted meta (non-string, unparseable,
+   `null`, non-object, missing/mistyped field) yields a controlled schema error, not a crash or a
+   silent pass. Only `packages/kit/src/collection.ts` changed (no shared-type move needed).
+2. **Correction 2 — `listResults()` exposes invalid records.** Added
+   `Collection<T>.listResults(): ReadonlyArray<readonly [string, GetResult<T>]>` enumerating every
+   stored entity id (including invalid/incomplete records) using the EXISTING `GetResult<T>` shape,
+   without deleting, repairing, or fabricating fields. `list()` keeps its valid-record-only behavior.
+   `GetResult` was ALREADY a public export in `index.ts`, so no `index.ts` change was required.
+3. **Correction 3 — real partial-mutation recovery regression (test-only).** A regression that first
+   proves, on raw `Y.Docs`, that the final-byte truncation of an encoded `root["injected"]="bad"`
+   update genuinely partially mutates the target doc (throws yet leaves `injected` present), then
+   feeds the SAME bytes through the public `applyUpdate` to a populated replica and asserts the
+   snapshot-rollback recovery: `malformedUpdate`, legacy+structured state preserved, `injected`
+   absent, zero notifications, surviving handles/subscribers, converging subsequent edit+sync, and a
+   pending dependent update surviving the rejected apply then integrating on prerequisite delivery.
+
+### Files changed (permitted set only)
+
+- `packages/kit/src/collection.ts` — Corrections 1 & 2 (schema recheck on every op; `listResults`;
+  parsed-meta validation). No other `src` file changed; `index.ts` NOT changed (`GetResult` already
+  exported).
+- `packages/kit/tests/schema-recheck-all-ops.test.ts` (new) — Correction 1 deterministic regression.
+- `packages/kit/tests/list-results.test.ts` (new) — Correction 2 valid+invalid enumeration regression.
+- `packages/kit/tests/partial-mutation-recovery.test.ts` (new) — Correction 3 recovery regression.
+- `.kiro/specs/sdk-foundation/requirements.md` — AC-SDK-001-1 (operation list incl. `listResults`),
+  AC-SDK-007-2 (every-operation recheck + corrupt-meta validation + honest "read/enumeration/delete
+  paths previously did NOT recheck" statement).
+- `.kiro/specs/sdk-foundation/design.md` — Collection interface (`listResults`), identity recheck
+  correction note, recovery regression note.
+- `.kiro/specs/sdk-foundation/tasks.md` — new T11 section (implemented+verified) + coverage-matrix rows.
+- `docs/progress.md` — this section.
+
+### Verification commands and results (Windows PowerShell, from workspace root)
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd -F @ghostsync/kit typecheck` | 0 | strict typecheck clean (src + tests + config) |
+| 2 | `pnpm.cmd -F @ghostsync/kit test` | 0 | 42 files / 112 tests passed, 0 failed (was 39/102) |
+| 3 | `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emitted src-only (8 `.js` + 8 `.d.ts`), no test files |
+| 4 | `git diff --check` | 0 | no whitespace/conflict errors (only cosmetic LF→CRLF warnings) |
+| 5 | `git status --short --branch` | 0 | branch `feat/sdk-foundation`; only permitted files changed; nothing committed |
+
+All original 102 tests still pass with no weakened assertions; +10 new tests across 3 new files.
+All 8 fast-check properties: `result=PASS`, `seed=424242`, `numRuns=200`, `numSkips=0`, `numShrinks=0`
+(reused `tests/fc-report.ts`; no new property added). No `.skip`/`.todo`/`.only`; no timeout change.
+
+### Next action (sdk-foundation correction round)
+
+Reviewer re-runs the five commands and records a verdict in
+`.kiro/specs/sdk-foundation/.review/corrections-round.json`. The loop stops when that verdict is
+`APPROVED`. Nothing was committed, pushed, or deployed in this step.
