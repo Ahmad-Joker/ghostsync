@@ -2,8 +2,8 @@
 
 ## Git setup
 
-- Branch: `main` (verified with `git branch --show-current`).
-- Commits: none — the repository has no commits on `main` yet.
+- Branch: `feat/kiro-steering` (current working branch; verified with `git branch --show-current`). The scaffold was committed on `main` as `c78e6f7` before this branch was cut.
+- Scaffold commit: `c78e6f7` (published) — current HEAD on `feat/kiro-steering`.
 - Origin remote: `https://github.com/Ahmad-Joker/ghostsync.git` (fetch/push). Git remotes were not modified in this step.
 - Node.js: `v24.14.0` (verified with `node --version`).
 - pnpm: `10.34.9` (verified with `pnpm.cmd --version`).
@@ -78,6 +78,17 @@ Exit code: `0`
 
 Exit code: `0`
 
+## Steering
+
+Workspace steering added on branch `feat/kiro-steering` (base commit `c78e6f7`):
+
+- `.kiro/steering/product.md` — inclusion: always
+- `.kiro/steering/architecture.md` — inclusion: always
+- `.kiro/steering/coding.md` — inclusion: always
+- `.kiro/steering/testing.md` — inclusion: always
+- `.kiro/steering/security.md` — inclusion: always
+- `.kiro/steering/ui.md` — inclusion: fileMatch, fileMatchPattern: "apps/**/*"
+
 ## Product features
 
 - Offline sync SDK engine (`@ghostsync/kit`) — Planned. Nothing implemented in this scaffold step.
@@ -85,6 +96,186 @@ Exit code: `0`
 - PatchBoard example app (`@ghostsync/patchboard`) — Planned. Nothing implemented in this scaffold step.
 - GhostSync Studio inspector UI (`@ghostsync/studio`) — Planned. Nothing implemented in this scaffold step.
 
+## core-sync-proof spec planning (feat/kiro-steering)
+
+Requirements-First Feature Spec `core-sync-proof` progressed through planning. No code, dependencies, builds, tests, commits, or pushes were performed in this step; only Markdown spec documents changed.
+
+- `requirements.md` revised per the approved direction: preserved stable requirement IDs (REQ-001..REQ-006) and existing acceptance-criterion IDs, applied the 9 corrections in place, added new AC IDs for new cases (AC-002-4, AC-002-5, AC-005-3, AC-006-4) and a new scenario S-004c and S-006, replaced the "Open questions" section with a "Resolved decisions" section stating the seven resolved decisions, and added a "Definitions" section fixing deep equality / observable state / update carrier.
+- `design.md` drafted: small public API, scalar domain, plain-JSON state projection with deep equality, update carrier (documentId + Uint8Array), full-state export (`Y.encodeStateAsUpdate` no state vector) distinct from future differential updates, restore lifecycle (fresh Y.Doc + fresh clientID, documentId preserved separately), distinguishable rejection/error behavior, shared seeding / independent replica state / cleanup, edge cases, invariants and owning layers, a mapping of every acceptance criterion (AC-001-1 through AC-006-4) to a concrete test, strict TypeScript + Vitest + fast-check proposal with reproducible seeds and nonempty generated cases, and a description (not implementation) of future storage/transport/capsule integration.
+- `tasks.md` drafted: short ordered checklist (tooling, API, sync, restore, validation, tests, final verification), each task linked to requirement IDs, exact proposed PowerShell commands for typecheck/tests/build (not executed), every implementation task marked pending.
+- Coverage checked: every acceptance criterion maps to a concrete test in `design.md` and to a task in `tasks.md`; no gaps found.
+
+Resolved decisions applied across all three spec docs: (1) Node.js proof with independent in-memory `Y.Doc` instances; (2) one top-level `Y.Map` with string keys and scalar values (string, finite number, boolean, null); (3) caller-supplied logical documentId carried alongside the update `Uint8Array`; (4) full-state exports via `Y.encodeStateAsUpdate(doc)` with no state vector; (5) observable state = the map's plain JSON projection compared by deep equality; (6) native Yjs conflict resolution, no custom timestamp ordering; (7) restore into a fresh `Y.Doc` with a fresh session clientID, preserving the logical documentId separately.
+
+## Spec review status
+
+- `.kiro/specs/core-sync-proof/requirements.md` — corrected and implemented (six design/task corrections applied; REQ-007 and AC-002-6 / S-007 added).
+- `.kiro/specs/core-sync-proof/design.md` — corrected and implemented (null-prototype projection, `unknown` apply boundary, fast-check `seed`/`numRuns`, behavioral AC-006-3, lifecycle rows, deletion-regression row, `tsconfig.build.json`).
+- `.kiro/specs/core-sync-proof/tasks.md` — converted to standard Markdown checkboxes; completed + verified tasks marked `- [x]`.
+
+## core-sync-proof implementation (feat/kiro-steering)
+
+This is a **Node in-memory proof** of the Kit's CRDT sync foundation. It is distinct from future
+browser/offline-persistence work (IndexedDB) and from transport (file/QR). Those remain unbuilt.
+
+### Six design/task corrections applied (spec docs + code)
+
+1. Browser-compatible SDK — no `node:util` / Node-only imports in `src`; the runtime `deepEqualState`
+   helper was dropped; deep-equality is a test concern (`expect(...).toEqual(...)`).
+2. Correct property-test config — `fc.configureGlobal({ numRuns: 200, seed: 424242 })` (supported
+   option names; no `baseSeed`); `fc.check` + explicit Vitest failure reporting seed/numRuns/numSkips/
+   numShrinks/counterexample/counterexamplePath; bounded nonempty `fc.uniqueArray` with distinct keys;
+   AC-006-3 is a real behavioral test (no source-comment grep).
+3. Empty payloads — zero-length `bytes` rejected as `invalidCarrier` before decode; an empty-doc
+   full-state export is non-empty and imports to `{}`; `new Uint8Array(0)` is not treated as a no-op.
+4. Safe state projection — `getState()` returns a fresh null-prototype snapshot with `__proto__`,
+   `constructor`, `toString` as own data properties; snapshot mutation cannot mutate the replica.
+5. Validation and lifecycle — `set` rejects undefined/array/object/function/symbol/bigint/NaN/±Infinity
+   before mutating; `applyUpdate(carrier: unknown)` checks the carrier shape before reading fields;
+   nonempty `documentId` enforced; after `destroy()` every other op throws `Error("replica has been
+   destroyed")`; repeated `destroy()` is a safe no-op.
+6. Deletion regression — set→sync→delete→sync removes the key on the peer; restoring the deleted state
+   into a fresh replica and replaying the OLDER pre-deletion update does not resurrect the key.
+
+### Changed files
+
+- `packages/kit/package.json` — ESM entry (`type:module`, `exports`, `main`/`module`/`types`,
+  `files:["dist"]`); scripts `typecheck`/`test`/`build`; dep `yjs@13.6.33`; dev `@types/node@24.19.2`,
+  `fast-check@4.10.2`, `typescript@7.0.2`, `vitest@5.1.0` (all exact pins).
+- `packages/kit/tsconfig.json` (new) — strict, `NodeNext`, `lib ES2022` (no DOM), `types node`,
+  `declaration`, includes `src` + `tests` + config.
+- `packages/kit/tsconfig.build.json` (new) — extends base; `src`-only emit to `dist/`; tests/config excluded.
+- `packages/kit/vitest.config.ts` (new) + `packages/kit/vitest.setup.ts` (new) — node env; fast-check
+  global `numRuns: 200`, `seed: 424242`.
+- `packages/kit/src/types.ts` (new) — `Scalar`, `State`, `UpdateCarrier`, `ApplyOutcome`, `Replica`
+  (`applyUpdate(unknown)`), `Kit`.
+- `packages/kit/src/scalars.ts` (new) — `assertScalar` runtime guard.
+- `packages/kit/src/state.ts` (new) — pure null-prototype `project(map)`.
+- `packages/kit/src/replica.ts` (new) — `createKit`, `ReplicaImpl`, carrier validation, `assertAlive`.
+- `packages/kit/src/index.ts` (new) — public re-exports.
+- `packages/kit/tests/*.test.ts` — 10 unit files + 3 property files (34 tests total).
+- `pnpm-lock.yaml` — regenerated by pnpm (1 file changed, 892 insertions).
+- `.kiro/specs/core-sync-proof/{requirements,design,tasks}.md` — corrected.
+- `docs/progress.md` — this section.
+- `.agents/tasks/core-sync-proof/verification.md` — machine-readable verification record.
+
+### Verification commands and results (Windows PowerShell, from workspace root)
+
+| Command | Exit code | Result |
+| --- | --- | --- |
+| `pnpm.cmd install` | 0 | regenerated lockfile (+44 packages) |
+| `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date / already up to date |
+| `pnpm.cmd -F @ghostsync/kit typecheck` | 0 | strict typecheck clean (src + tests + config) |
+| `pnpm.cmd -F @ghostsync/kit test` | 0 | 13 files / 34 tests passed, 0 failed |
+| `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emitted src-only (`.js` + `.d.ts`), no test files |
+| smoke check (`node dist/index.js` entry) | 0 | PASS — two replicas, disjoint edits, two-way exchange, both contain both edits |
+
+Property runs: seed **424242**, **200** numRuns completed per property, `result.failed === false`
+for all three property files (no skips/shrinks surfaced).
+
+Dependency versions installed: `yjs@13.6.33`, `@types/node@24.19.2`, `fast-check@4.10.2`,
+`typescript@7.0.2`, `vitest@5.1.0`.
+
+### Known limitations (deferred)
+
+- Malformed/hostile Yjs bytes beyond basic carrier validation are not handled (a well-formed carrier
+  with corrupt bytes can still throw inside `Y.applyUpdate`).
+- No payload size bounds, capsule versioning, or checksums. A checksum detects corruption; it does not
+  authenticate the sender.
+- No capsule codec, QR transfer, IndexedDB/browser storage, or app screens.
+- Node in-memory proof only; browser/offline-persistence is separate future work (REQ-005's
+  export-then-restore is the in-memory surrogate for "persistence after reload").
+
+## core-sync-proof — review-finding corrections (test-only, feat/kiro-steering)
+
+This is a **TEST-ONLY** correction pass on top of the Node in-memory proof above. No `src`,
+app packages, steering, dependency versions, `package.json`, or `pnpm-lock.yaml` were changed.
+Still a Node in-memory proof — distinct from future browser/offline-persistence (IndexedDB) and
+transport (file/QR) work, which remain unbuilt.
+
+### Review findings addressed
+
+The prior review (`.agents/tasks/core-sync-proof/review.json`, verdict APPROVED) raised two
+informational no-action items (corrupt-bytes passthrough deferred to the capsule tier; the
+`typescript@7.0.2` native-compiler pin). This pass additionally applies the required test-side
+corrections from the follow-up task:
+
+1. **`sync.property.test.ts` disjointness.** Previously A used unrestricted keys while only B was
+   prefixed (`B::`), so A could also generate a `B::...` key and the key sets were not guaranteed
+   disjoint. Fixed to consistent separate namespaces: A writes ONLY `A::`-prefixed keys and B writes
+   ONLY `B::`-prefixed keys, for both the writes and the assertions. Added a DETERMINISTIC case using
+   raw keys (A writes `B::x`, B writes `x`) that maps to distinct keys (`A::B::x`, `B::x`) and asserts
+   both edits survive with nothing colliding. All generated arrays bounded (`maxLength: 16`).
+2. **Actual fast-check metrics for every property.** New shared helper `tests/fc-report.ts` prints,
+   for EACH property regardless of outcome, the property name and the real `RunDetails` fields
+   (`seed`, `numRuns`, `numSkips`, `numShrinks`, pass/fail) via `process.stdout.write` (not captured
+   by Vitest console interception). On failure it surfaces the ORIGINAL error, the counterexample,
+   and the replay path (seed + counterexamplePath) without swallowing or replacing them. Metrics come
+   from the real result object, not constants. Seed 424242 / 200 runs preserved.
+3. **Strengthened merge-invariant coverage.** New `tests/merge-invariant.property.test.ts`:
+   update histories from TWO independent source replicas over a small key space (so repeated writes
+   to the SAME key and set-then-delete sequences occur), captured update bytes delivered to FRESH
+   receivers in (a) original order, (b) a generated permutation, (c) with duplicate deliveries, and
+   (d) a single `Y.mergeUpdates` batch; every valid apply asserted `ok === true`; convergence asserted
+   against a DIRECT Yjs reference `Y.Doc` that received those exact bytes (wrapper state compared to
+   the reference doc's projection, not only wrapper-to-wrapper); a deterministic deletion regression
+   (older pre-deletion update delivered after a newer deletion does NOT resurrect the key); every
+   created replica and reference `Y.Doc` destroyed.
+
+### Changed files (permitted set only)
+
+- `packages/kit/tests/sync.property.test.ts` — corrected namespacing + deterministic raw-key case + bounded generators + shared reporter.
+- `packages/kit/tests/fc-report.ts` (new) — shared `reportRun` metrics/replay helper (not a `*.test.ts`, so not collected as a suite).
+- `packages/kit/tests/merge-invariant.property.test.ts` (new) — strengthened convergence-vs-reference property + deterministic deletion regression.
+- `packages/kit/tests/invariants.property.test.ts` — bounded generator (`maxLength: 16`) + shared reporter (metrics now print on pass).
+- `packages/kit/tests/conflict.property.test.ts` — shared reporter (metrics print on pass).
+- `.kiro/specs/core-sync-proof/tasks.md` — new section 8 (review-finding corrections) with checkboxes.
+- `docs/progress.md` — this section.
+
+`packages/kit/vitest.setup.ts` and `vitest.config.ts` were NOT changed (the stdout-write helper made
+a config edit unnecessary).
+
+### Verification commands and results (Windows PowerShell, from workspace root)
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date; already up to date |
+| 2 | `pnpm.cmd -F @ghostsync/kit typecheck` | 0 | strict typecheck clean (src + tests + config) |
+| 3 | `pnpm.cmd -F @ghostsync/kit test` | 0 | 14 files / 37 tests passed, 0 failed |
+| 4 | `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emitted src-only (5 `.js` + 5 `.d.ts`); no test files |
+| 5 | `git diff --check` | 0 | no whitespace/conflict errors (only cosmetic LF→CRLF warnings) |
+| 6 | `git status --short --branch` | 0 | HEAD still `c78e6f7`; only permitted files changed; nothing committed |
+
+### Actual per-property fast-check metrics (from real RunDetails, printed by the run)
+
+All six properties: `result=PASS`, `seed=424242`, `numRuns=200`, `numSkips=0`, `numShrinks=0`.
+
+| Property (name as printed) | seed | numRuns | numSkips | numShrinks | result |
+| --- | --- | --- | --- | --- | --- |
+| REQ-002 two-way convergence (disjoint A::/B:: namespaces) | 424242 | 200 | 0 | 0 | PASS |
+| AC-003-1 concurrent same-key resolves to a submitted value | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-1 idempotency (re-apply is a no-op) | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-2 commutativity (order independence) | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-3 grouping (mergeUpdates equals sequential) | 424242 | 200 | 0 | 0 | PASS |
+| REQ-004 fresh receivers converge vs Yjs reference (orig/perm/dup/merged) | 424242 | 200 | 0 | 0 | PASS |
+
+Test totals: **14 files, 37 tests passed, 0 failed** (up from 13 files / 34 tests: +1 file for the
+new merge-invariant property, +3 tests = the new merge-invariant property, its deterministic deletion
+regression, and the deterministic namespace case in `sync.property.test.ts`). No unresolved failures.
+No src defect surfaced against the Yjs reference — all receivers converged to the reference projection.
+
+### Known limitations (unchanged — still a Node in-memory proof)
+
+- Malformed/hostile Yjs bytes beyond carrier validation are still not handled (a shape-valid carrier
+  with corrupt bytes can throw inside `Y.applyUpdate`) — deferred to the capsule tier.
+- No payload size bounds, capsule versioning, or checksums. A checksum detects corruption; it does not
+  authenticate the sender.
+- No capsule codec, QR transfer, IndexedDB/browser storage, or app screens.
+- Browser/offline-persistence (persistence after reload) remains separate future work; the
+  export-then-restore path is the in-memory surrogate.
+
 ## Next action
 
-Commit the verified scaffold, then create Kiro steering and specs before implementing sync primitives.
+Reviewer re-runs the six commands and updates `.agents/tasks/core-sync-proof/review.json`. On verdict
+`APPROVED`, proceed to the next transfer tier (file transfer / capsule codec) per product steering.
+Nothing was committed, pushed, or deployed in this step.
