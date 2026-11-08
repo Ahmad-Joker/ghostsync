@@ -1474,3 +1474,139 @@ event orders, or screenshots were fabricated.
 - The Node Web Locks shim and `fake-indexeddb` are unit-feedback mocks, explicitly NOT acceptance evidence;
   the real aborted-transaction recovery and the terminal-event ordering are exercised in Chromium via
   test-only harness instrumentation.
+
+## offline-assets milestone (feat/offline-assets)
+
+Branch `feat/offline-assets`, baseline `8312f50`. This milestone adds COLD OFFLINE loading of the
+PRODUCTION-built `@ghostsync/persist` harness via a BUILD-GENERATED Service Worker + Cache Storage precache.
+It does NOT change CRDT or persistence semantics (`packages/persist/src` is UNTOUCHED), adds NO dependency,
+edits NO lockfile, and does NOT build the application UIs. The harness stays a verification tool. Prior
+milestone history above is preserved.
+
+### PLANNED -> IMPLEMENTED -> TESTED
+
+- **PLANNED (spec):** `.kiro/specs/offline-assets/{requirements,design,tasks}.md` — a build-generated worker
+  + precache manifest, scope-relative registration, observable readiness, atomic install, scoped activation
+  cleanup, and the required real-Chromium acceptance matrix.
+- **IMPLEMENTED:** the Vite build-time generator, the generated Service Worker, harness registration +
+  observable readiness, and the harness DOM wiring (file list below).
+- **TESTED:** real Chromium acceptance (Playwright 1.65.0 / Chromium 158.0.8127.18) against the production
+  `vite preview` build with REAL service workers + REAL Cache Storage. 28 e2e pass (23 prior + 5 new). Unit
+  suites unchanged and green (112 kit, 50 persist). Evidence below is reported-this-run; a reviewer re-running
+  the ten commands is the independent external verification.
+
+### Worker filename + scope + cache-version strategy
+
+- **Worker file:** `sw.js` at the harness deployment root (served from `harness/dist/sw.js`); a TEST-ONLY
+  `sw-install-fail.js` sibling is emitted for the install-failure acceptance test only.
+- **Scope:** `./` (the harness deployment directory). All URLs resolve against `self.registration.scope`, so
+  there is NO hardcoded localhost port or absolute asset path and a subpath deployment works unchanged.
+- **Cache-name prefix (scoped):** `ghostsync-persist-harness-`; cache name = `${prefix}${cacheVersion}`.
+- **Cache version:** DETERMINISTIC — SHA-256 (first 16 hex) over the SORTED `url\u0000integrity` lines of
+  every precached entry, where `integrity` is a short SHA-256 of each emitted asset's bytes. Content-derived,
+  no timestamp/counter; a double build produced the SAME version (verified). Precache entries are DISCOVERED
+  from the actual emitted bundle (`generateBundle`, `order:"post"` so `index.html` is included) — hashed
+  filenames are never hardcoded. `sw.js`, `sw-install-fail.js`, and `precache-manifest.json` are excluded
+  from the precache. IndexedDB contents, sync messages, non-GET, arbitrary URLs, and external resources are
+  never cached.
+
+### Readiness / failure mechanism (observable DOM signal)
+
+`window.__gsOffline` exposes `{ state, ready, error, cacheVersion, cacheName, updateAvailable, applyUpdate }`,
+mirrored to `#offline-status` and `<html data-offline-state=... data-offline-ready=...>`. States:
+`registering -> installing -> (waiting | ready | failed)`, plus `unsupported` for an insecure/unsupported
+context. `ready === true` ONLY when the page has a controlling worker AND a bounded
+`GHOSTSYNC_PRECACHE_STATUS` round-trip reports the precache COMPLETE — never merely because registration
+resolved. A worker that goes `redundant` without controlling the page (atomic install reject) => `failed`.
+Tests await this signal (no arbitrary sleep). Update lifecycle: no automatic `skipWaiting`; a new worker
+WAITS (`updateAvailable`/`waiting`) and takes control on next navigation after clients release OR via the
+explicit `__gsOffline.applyUpdate()` prompt, so old pages never mix with new assets.
+
+### Files changed (permitted set only)
+
+- `.kiro/specs/offline-assets/requirements.md`, `design.md`, `tasks.md` (new).
+- `packages/persist/scripts/sw-precache-plugin.ts` (new) — build-time generator.
+- `packages/persist/harness/sw-register.ts` (new) — registration + observable readiness.
+- `packages/persist/harness/harness.ts` (modified) — calls `initOfflineReadiness()`; TEST-ONLY `showRestored`.
+- `packages/persist/harness/index.html` (modified) — `#offline-status` + `#restored-data` panels.
+- `packages/persist/vite.config.ts` (modified) — registers `swPrecachePlugin()` (build-only).
+- `packages/persist/e2e/helpers.ts` (modified) — `awaitOfflineReady` + `readOfflineState`.
+- `packages/persist/e2e/offline-assets.spec.ts` (new) — 5 real-Chromium acceptance tests.
+- `.gitignore` (modified) — clarifying comment; generated SW/manifest are under the already-ignored `dist/`.
+- `docs/progress.md` (this section).
+
+NOT touched: `packages/kit/**`, `packages/persist/src/**`, `apps/**`, `package.json`, `playwright.config.ts`
+(no change needed), the lockfile, root manifests, and `.agents/`.
+
+### Verification commands + REAL exit codes (Windows PowerShell, from workspace root, in order)
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date; already up to date |
+| 2 | `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emitted |
+| 3 | `pnpm.cmd -F @ghostsync/persist build` | 0 | `dist/` emitted |
+| 4 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict typecheck clean |
+| 5 | `pnpm.cmd -F @ghostsync/persist test` | 0 | 7 files / **50 tests** passed, 0 failed |
+| 6 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | emitted `index.html`, `sw.js`, `sw-install-fail.js`, `precache-manifest.json`, `assets/index-<hash>.js` |
+| 7 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **28 passed / 0 failed** (23 prior + 5 new offline) |
+| 8 | `pnpm.cmd -F @ghostsync/kit test` | 0 | 42 files / **112 tests** passed (8 properties) |
+| 9 | `git diff --check` | 0 | no whitespace/conflict errors (cosmetic LF->CRLF warnings only) |
+| 10 | `git status --short --branch` | 0 | only permitted files changed; `.agents/` untouched |
+
+- **Unit totals:** kit **112**, persist **50** (both unchanged and green).
+- **Browser totals:** **28 passed / 0 failed**.
+- **Chromium:** 158.0.8127.18 (Playwright 1.65.0 bundled chromium-1254), real service workers + real Cache
+  Storage over the production `vite preview` build.
+
+### Offline-navigation results (reported this run)
+
+- **Cold boot + restore (promised):** clean context -> online -> `__gsOffline.ready === true` -> create legacy
+  (`status`) + structured (`incident i1`) + imported-remote (`a`) data -> flush -> `context.setOffline(true)`
+  -> reload WITHOUT re-enabling -> shell boots (`__gs.ready`), `__gsOffline.ready` again, and `status=triage`,
+  `incident={id:i1,title:Spill,priority:1}`, remote `a=1` all RESTORE. Then an OFFLINE edit
+  (`status=resolved-offline`) + flush + OFFLINE reload -> the latest edit survived. PASS.
+- **`fromServiceWorker()` asserts:** the document (navigation) response AND the `assets/index-<hash>.js`
+  response both returned `fromServiceWorker() === true` on the offline reload. PASS.
+- **New page, same offline profile:** a second page in the same context cold-navigated offline (SW-served),
+  saw `StorageInUseError` while the first page held the Web Lock, then reopened the SAVED replica
+  (`k=held-by-first`) after the first page released the lock. PASS.
+- **Uncached fresh profile (NOT promised):** a brand-new context set offline BEFORE any visit honestly FAILED
+  to load the harness (navigation error / harness not booted). PASS — first-ever offline visit is not promised.
+- **Install-failure not ready:** registering the REAL `sw-install-fail.js` (its install genuinely rejects) ->
+  the harness reported `state==="failed"`, `ready===false` — never offline-ready. PASS.
+- **Scoped cleanup preserves others:** seeded an unrelated cache (`unrelated-app-cache-v1`), a stale
+  prefixed cache (`ghostsync-persist-harness-staleversion00`), and a persisted replica; triggered scoped
+  cleanup -> the stale prefixed cache was removed while the unrelated cache (and its body `keep-me`) AND the
+  IndexedDB replica (`survive=yes`) BOTH survived. PASS.
+- **Screenshot (real):** captured in the e2e run at
+  `packages/persist/playwright-report/offline-restored.png`
+  (absolute: `C:\Users\ahmad\ghostsync\packages\persist\playwright-report\offline-restored.png`), showing the
+  OFFLINE-loaded harness with `window.__gs installed`, `offline-ready (cache ...)`, and
+  `restored-data: status=resolved-offline (OFFLINE reload, SW-served)`. This artifact lives under the
+  gitignored `playwright-report/` and is regenerated on each `test:browser` run.
+
+### Honesty / evidence boundary
+
+No `route.fulfill`, injected page HTML, or mocked service worker was used to manufacture offline success.
+Offline is real (`context.setOffline(true)`); SW delivery is proven with `response.fromServiceWorker()`. The
+install-failure test uses a REAL worker whose install rejects (the browser discards it). Failure-injection
+cases are in a clearly separated `offline negative cases` describe block. The numbers above are
+reported-this-run from actual executions; a reviewer re-running the ten commands is the independent external
+verification.
+
+### Known limitations
+
+- **First-online-visit requirement:** a profile must visit the harness ONCE with networking available to
+  install the worker and populate the precache. A FIRST-EVER visit offline is NOT supported (asserted).
+- **Cache eviction / cleared storage:** browser storage pressure or a user clearing site data evicts the
+  precache; the next load then needs networking again (same as the first-visit requirement).
+- **localhost/HTTPS:** service workers require a secure context; `file://` or an insecure origin reports
+  `unsupported` and offers no offline loading.
+- A content hash DETECTS corruption; it does NOT authenticate the origin of cached assets.
+- This milestone caches ASSETS only — CRDT, persistence semantics, capsules, QR, and app UIs are unchanged
+  and out of scope.
+
+### Next action (offline-assets)
+
+Proceed to ONE final code review of this implementation. Nothing was pushed, reset, or amended; work is
+committed on `feat/offline-assets` with the evidence above recorded in the commit message.

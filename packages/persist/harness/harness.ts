@@ -9,6 +9,8 @@
  * the real navigator.locks API — this is the acceptance surface (REQ-BP-007).
  */
 import { createKit } from "@ghostsync/kit";
+
+import { initOfflineReadiness } from "./sw-register.js";
 import {
   isPersistenceError,
   openReplica,
@@ -188,6 +190,12 @@ export interface GhostSyncApi {
   plantRecord(dbName: string, record: Record<string, unknown>): Promise<unknown>;
   /** Read a stored record's bytes as hex (to assert byte-identical preservation). */
   readRecordHex(dbName: string, storageKey: string): Promise<string | null>;
+  /**
+   * TEST-ONLY (offline-assets): echo a short human-readable summary of restored
+   * data into the #restored-data DOM node so an offline screenshot visibly shows
+   * the recovered replica. Purely presentational; no persistence effect.
+   */
+  showRestored(text: string): void;
   /**
    * TEST-ONLY failure instrumentation (NOT part of the shipped package surface).
    * Arm a ONE-SHOT real IndexedDB abort: the NEXT readwrite transaction opened on
@@ -458,6 +466,13 @@ const api: GhostSyncApi = {
     }
     return toHex(value.bytes);
   },
+  showRestored(text) {
+    const el = document.getElementById("restored-data");
+    if (el !== null) {
+      el.textContent = `restored-data: ${text}`;
+      el.className = "ready";
+    }
+  },
 };
 
 /** Minimal direct IndexedDB access for planting / reading raw records in tests. */
@@ -505,3 +520,8 @@ if (status !== null) {
   status.textContent = "ready — window.__gs installed";
   status.className = "ready";
 }
+
+// offline-assets milestone: register the Service Worker + drive observable
+// offline-readiness on window.__gsOffline. This is independent of window.__gs
+// (the existing persistence surface) and does not alter CRDT/persistence logic.
+initOfflineReadiness();

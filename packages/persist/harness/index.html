@@ -23,16 +23,32 @@
       .ready {
         color: #0a7d2c;
       }
+      .failed {
+        color: #b00020;
+      }
+      #offline-status {
+        margin-top: 8px;
+        padding: 8px 12px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        background: #fff;
+      }
     </style>
   </head>
   <body>
     <h1>GhostSync Persist — Browser Harness</h1>
     <div id="status">booting…</div>
+    <div id="offline-status">offline: registering…</div>
+    <div id="restored-data">restored-data: (none)</div>
     <p>
       This page is a test harness (not an application UI). It exposes
       <code>window.__gs</code> for the Playwright acceptance suite. Readiness is
       signalled by <code>window.__gs</code> being defined; tests await real
       lifecycle events (open resolved, flush resolved, transaction oncomplete).
+      Offline-asset readiness is surfaced separately on
+      <code>window.__gsOffline</code> and mirrored to the
+      <code>#offline-status</code> panel and the
+      <code>&lt;html data-offline-state&gt;</code> attribute.
     </p>
     <script type="module" src="./harness.ts"></script>
   </body>
