@@ -852,3 +852,625 @@ All 8 fast-check properties: `result=PASS`, `seed=424242`, `numRuns=200`, `numSk
 Reviewer re-runs the five commands and records a verdict in
 `.kiro/specs/sdk-foundation/.review/corrections-round.json`. The loop stops when that verdict is
 `APPROVED`. Nothing was committed, pushed, or deployed in this step.
+
+## browser-persistence spec planning (feat/browser-persistence)
+
+Planning-only milestone for the smallest reliable **browser-persistence** foundation. **No code,
+dependencies, builds, tests, commits, or pushes were performed in this step** — only three Markdown spec
+documents were created and this progress file was appended. Branch: `feat/browser-persistence`.
+
+### Verified baseline
+
+- **Baseline commit:** `d53452f` ("feat: implement verified reusable GhostSync SDK foundation").
+  `git status --short --branch` showed `## feat/browser-persistence` with only untracked `.agents/`
+  (left untouched); `origin` not modified. Node `v24.14.0`, pnpm `10.34.9`.
+- The **sdk-foundation** milestone is implemented, verified, committed, and pushed: `@ghostsync/kit`
+  exposes replicas, collections, full-state exports (`exportState() → TransportUpdate`), validated imports
+  (`applyUpdate(unknown) → ApplyOutcome` with direct-apply + snapshot-rollback-on-throw), change
+  subscriptions, and controlled invalid-record enumeration (`listResults()` + `GetResult<T>`). Legacy data
+  and structured records live in SEPARATE top-level Yjs maps (`doc.getMap("root")` and
+  `doc.getMap("ghostsync:records:v1")`). **112 tests across 42 files and eight fast-check properties pass.**
+- The real `packages/kit/src/*`, `package.json`, `tsconfig*.json`, and `vitest.config.ts` were read at
+  `d53452f` before planning; the actual signatures are quoted verbatim in `design.md`.
+- **Browser runtime remains UNVERIFIED.** The SDK milestone is a Node in-memory proof plus a static
+  no-`node:`-imports scan; no browser execution evidence exists yet.
+
+### browser-persistence status: PLANNED ONLY, not implemented
+
+Nothing in `packages/kit` or any app was changed. The spec describes a NEW, additive, browser-targeted
+workspace package **`@ghostsync/persist` (`packages/persist`)** that keeps all IndexedDB / Web Locks
+dependencies OUT of `packages/kit`:
+
+- **Scope (honest):** this milestone proves **data persistence and editing in an ALREADY-LOADED browser
+  page with networking DISABLED**. It does **NOT** implement **cold offline loading** (cached application
+  assets / service worker) and must not claim to — that is a later bounded **Phase-4** milestone. No server
+  sync, no hidden network dependency.
+- **Model:** persist a single **full-state snapshot** (`exportState().bytes`, which captures both top-level
+  maps and pending out-of-order updates) per storage key; restore via `createReplica(documentId, bytes)`.
+  Update-log / compaction machinery is explicitly deferred and justified (NFR-BP-005).
+- **Storage key (collision-safe):** `esc(app) + SEP + esc(documentId) + SEP + esc(replicaId)` using the
+  Kit's NUL-introducer escape. A stable local `replicaId` (`crypto.randomUUID()` when omitted) is DISTINCT
+  from the Yjs session `clientID`; two replicas of the same `documentId` with different `replicaId` persist
+  separately. IndexedDB is per-origin, per-profile (a browser boundary the package relies on).
+- **API:** async `openReplica(options) → Promise<PersistSession>` validates stored bytes BEFORE handing out
+  a ready session (no early-edit overwrite; corrupt record → visible recoverable `PersistenceError`, never
+  auto-wipe). `PersistSession` exposes reads/exports + local edits + the ONLY supported import path
+  `session.applyUpdate` + a `dirty/saving/saved/error` state machine + `flush()` + `close()`.
+- **Durability:** `saved` set ONLY in `transaction.oncomplete`; a monotonic `sequence`/generation guard
+  drops stale async writes; failed save keeps the live replica intact and retries on next flush/dirty;
+  unload flush is best-effort only (no durability promise on tab close).
+- **Persist every accepted update (REQ-BP-004):** because an accepted out-of-order update can stay pending
+  WITHOUT firing a notification, `session.applyUpdate` marks dirty on EVERY `ok` (including pending/no-op);
+  rejected imports are never persisted; direct `replica.applyUpdate` bypasses persistence and is unsupported.
+- **Concurrency (REQ-BP-005):** same-key two-tab = single-writer via the **Web Locks API** (built-in, no
+  dependency); the non-owner is read-only / awaiting; ownership transfer re-reads before writing; separate
+  keys are both writers (safe). Degraded, visible fallback when Web Locks or IndexedDB is unavailable.
+- **Verification plan (REQ-BP-007):** real IndexedDB in **Chromium via Playwright** covering the reload
+  survival matrix (legacy + structured survive; replicaId isolation; restored convergence; pending
+  dependent update survives reload then integrates; remote imports persist; save failure visible + retry;
+  concurrent same-key policy; invalid records discoverable via `listResults`). A Node mock
+  (`fake-indexeddb`) layer is for FAST FEEDBACK only and is explicitly NOT acceptance evidence. Observable
+  readiness + bounded timeouts, never sleeps.
+
+### Proposed dependencies (NOT installed — planning only)
+
+- IndexedDB access: **none (raw IndexedDB)** — dependency-free; keeps `oncomplete`-gated durability explicit.
+- Concurrency: **none (Web Locks browser built-in)**.
+- `@ghostsync/kit` — workspace dependency.
+- Dev (acceptance): **`@playwright/test@1.56.0`**; dev (fast feedback): **`fake-indexeddb@6.2.2`**; reuse
+  the Kit's `typescript@7.0.2`, `@types/node@24.19.2`, `vitest@5.1.0`. Exact future `pnpm.cmd` install/
+  build/test commands are listed in `design.md` and `tasks.md`; none were run.
+
+### Files created (exactly three) + updated (exactly one)
+
+- `.kiro/specs/browser-persistence/requirements.md` (new) — Summary, Assumptions, REQ-BP-001..007 with
+  EARS acceptance criteria and a named planned test each, NFR-BP-001..006, consolidated acceptance criteria,
+  and Out of Scope (cold offline loading explicitly excluded).
+- `.kiro/specs/browser-persistence/design.md` (new) — overview, locked stack, verbatim Kit signatures,
+  concrete TypeScript API (`openReplica`, `PersistSession`, `SaveState`, `PersistenceError`,
+  `StoredRecord`), storage key format, record/version format + validation order, lifecycle + generation
+  rule + unload note, routed-import mechanism, Web Locks concurrency, per-operation error table, input
+  validation, invariant ownership, exact proposed files, dependency choices with pinned versions + exact
+  future PowerShell commands, external-consumer import, testability + traceability, and U1–U6 unresolved
+  decisions each with a recommendation.
+- `.kiro/specs/browser-persistence/tasks.md` (new) — ordered `- [ ]` checklist (scaffold; key+record codec;
+  async open/restore/validate; save state machine + generation/flush; routed import; Web Locks concurrency;
+  error/lifecycle; Playwright harness; full test plan), each linked to REQ-BP IDs, with the exact future
+  PowerShell commands and a coverage matrix. Every implementation task pending; no planned test claimed
+  passing.
+- `docs/progress.md` (updated) — this section (all prior milestone history preserved above).
+
+### Verification commands and results (Windows PowerShell, from workspace root; planning only)
+
+| # | Command | Exit | Result |
+| --- | --- | --- | --- |
+| 1 | `git diff --check` | 0 | no whitespace/conflict errors |
+| 2 | `git status --short --branch` | 0 | `## feat/browser-persistence`; three new spec files + modified `docs/progress.md` + untracked `.agents/` only |
+
+No dependencies were installed and no build or test was run in this step — planning only. No planned test is
+claimed to pass. The SDK's 112 tests and eight properties are preserved (this milestone adds a new package;
+it does not edit `packages/kit`). `.agents/` left untouched; nothing committed or pushed; `origin` untouched.
+
+### Milestone distinction
+
+- **This milestone (browser-persistence):** data persistence + editing in a loaded page, networking
+  disabled. IndexedDB persistence via `@ghostsync/persist`.
+- **Later Phase-4 milestone (cold offline loading):** cached application assets + service worker so the app
+  loads with no network from a cold start. NOT in scope here and NOT implemented.
+
+### Next action (browser-persistence)
+
+Review `.kiro/specs/browser-persistence/requirements.md`, `design.md`, and `tasks.md` at the
+requirements-and-design review gate **before any implementation**. On an `APPROVED` verdict, begin
+implementation per the task order. Nothing was committed, pushed, or deployed in this step.
+
+## browser-persistence spec planning — review-finding correction (feat/browser-persistence)
+
+Planning-only, documentation-only correction pass. The first design-and-tasks review
+(`.kiro/specs/browser-persistence/.review/review.md`) returned verdict **CHANGES_REQUESTED** with
+**2 MEDIUM + 4 NIT**. All six are addressed in the three spec docs; this progress file is appended. **No
+`packages/kit/*`, `apps/*`, manifests, lockfile, tooling, steering, or `.agents/` were touched; no
+dependencies installed; no build/test run; nothing staged, committed, pushed, reset, or deployed.** Branch
+`feat/browser-persistence`; baseline `d53452f`; `origin` untouched. Still PLANNED-only — every `tasks.md`
+item remains `- [ ]` and no planned test is claimed passing. The Kit's **112 tests / 8 properties** stay
+preserved (kit untouched). Offline scope stays bounded to loaded-page persistence (not cold offline
+loading).
+
+### Corrections applied (all six findings)
+
+1. **MEDIUM-1 — reader-role mutation unspecified (silent-loss hazard) + NIT-3.** Simplified same-key
+   concurrency to **EXCLUSIVE single-writer sessions**. Removed the reader role, the reader-mutation path,
+   and automatic ownership transfer **entirely** (no `role === "reader"` anywhere). A session acquires a
+   **non-waiting exclusive Web Lock** (`{ mode: "exclusive", ifAvailable: true }`) for the storage identity
+   **BEFORE** reading/restoring its IndexedDB record and holds it for the **whole session lifetime** (through
+   saves and final close). Same-key contention → `openReplica` rejects with `StorageInUseError` and the
+   failed opener performs **zero** storage writes. Absent Web Locks → rejects with
+   `UnsupportedEnvironmentError` (no silent unprotected fallback). A retry after the owner closes **reloads
+   the latest committed record** while holding the lock (never a stale in-memory snapshot). **Close-failure
+   rule:** a failed final save during `close()` rejects with `CloseFailedError` (never a silent durable
+   close); the in-memory replica and `exportBytes()` survive so unsaved state stays exportable, and the lock
+   releases on dispose / page unload. Dropped the single-member `OpenOptions.concurrency?: "single-writer"`
+   field (NIT-3) and removed `SaveStateInfo.degraded` + the `role` field.
+2. **MEDIUM-2 — async checksum vs IndexedDB transaction lifetime + FNV ambiguity.** Standardized on
+   **SHA-256** (`crypto.subtle.digest`); removed all FNV-1a alternatives from the record section, U3, and
+   tasks. Stated the **ordering invariant**: capture the immutable snapshot bytes and **await the digest to
+   completion BEFORE** opening the `readwrite` transaction; the transaction body does **only synchronous**
+   work (read-compare `sequence`, then `put` precomputed bytes+checksum), never awaiting inside the active
+   transaction (which would raise `TransactionInactiveError`). Request/event ordering specified: issue
+   `objectStore.put`, then `transaction.oncomplete` resolves the save. The **whole** capture→hash→write
+   pipeline is single-flight so an older hashed snapshot can never overwrite a newer one (stale generation
+   dropped). A save is `saved` **only** on `transaction.oncomplete`, not request `onsuccess`; a
+   transaction abort/error leaves the session **visibly unsaved** with the live replica preserved. On-open
+   verification finishes the readonly transaction, THEN verifies bytes against the stored checksum and
+   decodes before exposing the ready session; a checksum/decode failure is a visible `InvalidRecordError`
+   and the corrupt record is preserved.
+3. **NIT-4 — `session.replica` read handle.** REQ-BP-004-5 now drops the `session.replica` example and
+   records the resolved decision: reads/exports via **explicit accessors**
+   (`get`/`has`/`getState`/`collection`/`subscribe`/`exportState`/`exportStateVector`/`exportDiff`); the raw
+   `Replica` is **deliberately not exposed** (no `session.replica`), so `replica.applyUpdate` is unreachable
+   through the session.
+4. **NIT-5 — copied `esc()` drift risk.** Documented ownership: the persistence package owns its **own**
+   `esc`/`SEP` codec for the IndexedDB `keyPath`; it does **not** import private SDK internals (the Kit's
+   `esc()` is module-private), and the copied codec is deliberately decoupled (IndexedDB keyPath only, never
+   interoperating with Kit records-map keys). `storage-key.test.ts` pins expected key strings so drift is
+   caught.
+5. **NIT-6 — reliance on `createReplica` throwing on bad seed.** Validation step 6 / new AC-BP-002-5a state
+   that `openReplica` wraps `createReplica` in `try/catch` (the Kit does not pre-validate seed bytes), maps
+   the decode throw to `InvalidRecordError`, cleans up the temporary replica/`Y.Doc` + IDB connection,
+   **releases the acquired Web Lock**, and **preserves** the corrupt stored record (no empty-state
+   replacement, no delete).
+6. **Corrupt-record preservation** reinforced across requirements and design: a failed checksum/decode or
+   seed-reject never auto-replaces with empty state and never deletes.
+
+### Planned regressions per correction (named, PENDING — none claimed passing)
+
+- **Correction 1 (concurrency):** `concurrent-same-key.spec.ts` — second same-key session cannot open
+  (`StorageInUseError`); two different replica keys open independently/concurrently; after owner flush+close
+  a retry restores the latest saved data (not stale); a failed acquisition performs zero storage writes
+  (stored record byte-unchanged); unsupported-capability env → `UnsupportedEnvironmentError`.
+- **Correction 2 (checksum/txn):** `save-flush.spec.ts` — prescribed save path succeeds with a real async
+  SHA-256 digest + real IndexedDB; a delayed/slow hash for an older generation cannot clobber a newer save;
+  a transaction abort surfaces `error` with the replica preserved.
+
+### Files changed in this correction (planning docs only)
+
+- `.kiro/specs/browser-persistence/requirements.md` — REQ-BP-002 (AC-BP-002-5/5a seed try-catch + corrupt
+  preservation), REQ-BP-003 (AC-BP-003-2a hash-before-txn, 3 abort=unsaved, 4 single-flight pipeline),
+  REQ-BP-004-5 (no `session.replica`), REQ-BP-005 (exclusive single-writer AC-BP-005-1..7), NFR-BP-006
+  (SHA-256 only), consolidated acceptance criteria summary.
+- `.kiro/specs/browser-persistence/design.md` — `OpenOptions`/`SaveStateInfo`/`PersistSession` interfaces
+  (dropped `concurrency`/`role`/`degraded`, added `exportBytes()` + close-failure contract), extended
+  `PersistenceError` code union (`UnsupportedEnvironmentError`/`StorageInUseError`/`CloseFailedError`),
+  SHA-256 checksum + save-ordering invariant, validation step-6 seed try/catch, rewritten "Concurrency"
+  (exclusive single-writer), updated invariant ownership + error table + `locks.ts` file note, storage-key
+  ownership/drift note, U3/U4 marked RESOLVED, and a filled-in "Responses to review findings" section.
+- `.kiro/specs/browser-persistence/tasks.md` — tasks 2.2 (SHA-256/ordering), 2.3 (new error codes), 4.1/4.2
+  (lock-before-restore + seed try/catch + cleanup/lock-release), 5.2 (hash-before-txn/single-flight),
+  5.4 (`CloseFailedError`), 6.2 (no raw `Replica`), 7.1/7.2/7.3 (exclusive single-writer), and e2e specs
+  9.8 / 9.10.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+### Verification commands and results (Windows PowerShell, from workspace root; planning only)
+
+| # | Command | Exit | Result |
+| --- | --- | --- | --- |
+| 1 | `git diff --check` | 0 | no whitespace/conflict errors |
+| 2 | `git status --short --branch` | 0 | `## feat/browser-persistence...`; only `.kiro/specs/browser-persistence/**` + modified `docs/progress.md`; untracked `.agents/` + untracked `.kiro/specs/browser-persistence/` |
+
+Grep confirmed removal across the spec dir of: the `reader` role / reader sessions, automatic ownership
+transfer, FNV-1a, `session.replica`, the single-member `concurrency` option, and any `degraded`/silent
+unprotected-writer fallback (only explicit negations remain). No dependencies installed; no build/test run;
+nothing staged, committed, pushed, reset, or deployed; `.agents/` and `origin` untouched.
+
+### Next action (browser-persistence correction)
+
+Reviewer re-checks the three spec docs against the 2 MEDIUM + 4 NIT findings and updates
+`.kiro/specs/browser-persistence/.review/`. On an `APPROVED` verdict, begin implementation per the task
+order. Nothing was committed, pushed, or deployed in this step.
+
+## browser-persistence implementation (feat/browser-persistence)
+
+IMPLEMENTED & VERIFIED. New separate package `@ghostsync/persist` (`packages/persist`) adds IndexedDB
+full-state persistence on top of the GhostSync Kit SDK. The Kit (`packages/kit`) was **not modified** — the
+persist package consumes only its public API. Baseline `d53452f`. Nothing was staged, committed, pushed, or
+deployed (the caller handles git); `.agents/` and `origin` were left untouched.
+
+### Implemented vs tested (unit) vs browser-verified — the honest distinction
+
+- **Implemented:** the full `@ghostsync/persist` source (identity/storage-key codec, record codec +
+  SHA-256 checksum + validation order, raw IndexedDB layer, exclusive Web Locks, the save-state machine,
+  routed import, guarded session/collection facade, close/dispose + recovery-only), a minimal Vite browser
+  harness, and both test suites.
+- **Tested (unit — fast feedback, NOT browser acceptance evidence):** 38 Node/Vitest tests on
+  `fake-indexeddb` + a **labeled** single-process Web Locks mock + the **real** `crypto.subtle` SHA-256.
+- **Browser-verified (acceptance evidence):** 15 Playwright tests in **real Chromium** against **real
+  IndexedDB + real SHA-256 + the real `navigator.locks` API**. Chromium: **Chrome for Testing
+  158.0.8127.18 (playwright chromium v1254)**; Playwright **1.65.0**.
+
+### Scope honesty (offline)
+
+This milestone proves **data persistence + editing in an already-loaded page with networking disabled**. The
+harness loads with networking ON (to fetch uncached assets), then the browser context is set OFFLINE for all
+edit/import/flush assertions; networking is re-enabled ONLY to (re)load uncached assets on a reload and
+disabled again afterwards. **Cold offline loading** (cached assets / service workers) is NOT implemented and
+NOT claimed — it is the next milestone.
+
+### Files changed (permitted set only)
+
+- `packages/persist/package.json` — `@ghostsync/persist`, private, ESM, scripts
+  `typecheck`/`test`/`build`/`build:harness`/`test:browser`; dep `@ghostsync/kit@workspace:*`.
+- `packages/persist/tsconfig.json`, `tsconfig.build.json` — strict, `lib ["ES2022","DOM","DOM.Iterable"]`,
+  NodeNext, src-only build (mirrors the Kit).
+- `packages/persist/vitest.config.ts`, `vitest.setup.ts`, `tests/support/web-locks-mock.ts` — Node unit env.
+- `packages/persist/vite.config.ts`, `playwright.config.ts` — harness build + Chromium acceptance config.
+- `packages/persist/src/{index,types,identity,record,errors,idb,locks,session}.ts` — the package source.
+- `packages/persist/tests/*.test.ts` + `tests/support/*` — 38 unit tests.
+- `packages/persist/harness/{index.html,harness.ts}` — the Vite browser harness.
+- `packages/persist/e2e/*.spec.ts` + `e2e/helpers.ts` — 15 Playwright acceptance tests.
+- `pnpm-lock.yaml` — regenerated by `pnpm.cmd install` for the new dev deps (single root lockfile).
+- `.kiro/specs/browser-persistence/{requirements,design,tasks}.md` — updated from PLANNED to IMPLEMENTED &
+  VERIFIED, reflecting the five implementation clarifications.
+- `docs/progress.md` — this section.
+- `.gitignore` — added `playwright-report/`, `test-results/`, `.playwright/` (generated browser artifacts;
+  `dist/` was already ignored, covering `harness/dist`).
+
+Root `package.json` and `pnpm-workspace.yaml` were NOT changed — the workspace already globs `packages/*`.
+No changes anywhere under `packages/kit` or `apps/`.
+
+### Dependency pins (exact; verified against the registry for Node 24 / pnpm 10.34.9)
+
+- `@playwright/test@1.65.0` (engines node>=20)
+- `fake-indexeddb@6.2.7` (engines node>=18)
+- `vite@8.3.6` (engines node ^20.19 || >=22.12 — satisfied by Node v24.14.0)
+- Reused from the Kit, unchanged: `typescript@7.0.2`, `@types/node@24.19.2`, `vitest@5.1.0`.
+- Runtime deps: none beyond `@ghostsync/kit` — IndexedDB + Web Locks + `crypto.subtle` are browser built-ins.
+
+### Key implementation decisions (the five clarifications)
+
+1. **close/dispose + collection lifecycle.** `dispose(): Promise<void>` is a first-class, idempotent,
+   non-durable discard. `close()` prevents mutation once closing begins, flushes edits accepted before
+   closing, and on success releases replica + IDB connection + Web Lock + listeners + page-lifecycle
+   handlers. On a failed final save it rejects `CloseFailedError` and enters a **recovery-only** state:
+   `exportBytes()` and reads keep working; `set`/`delete`/`applyUpdate`/`flush` AND `collection(adapter)`
+   (schema-meta write ⇒ mutation) reject `ClosedError`; the lock is retained until an explicit `dispose()`.
+   No queued save continuation writes after release.
+2. **Save ordering + truthful state.** Generation counter initialized from the validated stored sequence
+   (non-negative safe integer); current dirty revision tracked separately from the saving snapshot (an older
+   txn completing never reports the session saved while a newer edit is pending); SHA-256 computed on an
+   immutable `.slice()` copy BEFORE the readwrite txn; the txn body is synchronous read-compare-put via the
+   request callback, durable on `oncomplete`; a skipped stale write never falsely reports newer bytes saved;
+   `maxBytes` enforced before writes too; `onStateChange` exceptions isolated; failed save retries only on
+   the next flush/dirty (no tight loop).
+3. **Lock identity + cleanup.** Lock name `"ghostsync:lock:" + esc(dbName) + SEP + storageKey` includes both
+   dbName and storageKey; `ifAvailable:true` non-waiting, no silent unlocked fallback; acquisition/open
+   failure releases all acquired resources; a late IDB-open success after an earlier rejection closes the
+   abandoned connection.
+4. **Safe restore.** Validate shape before `bytes.length`; size bound before hashing/decoding; then version,
+   identity, checksum, sequence. Seeding goes through a FRESH PUBLIC `createReplica(documentId)` +
+   `applyUpdate({documentId, bytes})`, destroying that accessible replica if the apply rejects — no reliance
+   on a thrown constructor; the corrupt record is never auto-wiped/deleted.
+5. **Browser harness + honest offline.** Minimal Vite build/serve of the built package entries; offline
+   discipline as described above; same-key contention uses TWO PAGES in the SAME browser context + origin
+   (shared storage + locks). No faked offline reload; cold offline loading not claimed.
+
+### Verification commands and exit codes (Windows PowerShell, from workspace root; `$LASTEXITCODE`)
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd install` | 0 | installed new dev deps; regenerated `pnpm-lock.yaml` |
+| 2 | `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date |
+| 3 | `pnpm.cmd -F @ghostsync/kit build` | 0 | kit `dist/` emitted (consumed by persist + harness) |
+| 4 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict typecheck clean (src + tests + e2e + harness + config) |
+| 5 | `pnpm.cmd -F @ghostsync/persist test` | 0 | **6 files / 38 unit tests passed, 0 failed** (fake-indexeddb + labeled Web Locks mock + real SHA-256) |
+| 6 | `pnpm.cmd -F @ghostsync/persist build` | 0 | src-only `dist/` (`.js` + `.d.ts`) |
+| 7 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | Vite built `harness/dist` from built package entries |
+| 8 | `pnpm.cmd -F @ghostsync/persist exec playwright install chromium` | 0 | downloaded Chrome for Testing **158.0.8127.18** (chromium v1254) |
+| 9 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **15 Chromium acceptance tests passed, 0 failed** (real IndexedDB + SHA-256 + Web Locks) |
+| 10 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **42 files / 112 SDK tests passed, 0 failed — unchanged** |
+| 11 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings) |
+| 12 | `git status --short --branch` | 0 | only permitted paths changed; nothing committed |
+
+Browser acceptance WAS obtained (install + launch both succeeded). No screenshots were produced because all
+15 tests passed (Playwright `screenshot: "only-on-failure"`); the HTML report is written to
+`packages/persist/playwright-report/` and `test-results/` (both gitignored).
+
+### Test totals
+
+- **Unit (Vitest, fake-indexeddb — NOT browser evidence):** 38 passed / 38 (6 files).
+- **Browser (Playwright, real Chromium — acceptance evidence):** 15 passed / 15.
+- **SDK regression (`@ghostsync/kit`):** 112 passed / 112 — unchanged (no `.skip`/`.todo`/`.only`, no
+  weakened assertions, no edits to `packages/kit`).
+
+### Known limitations (deferred)
+
+- Cold offline loading (cached assets / service workers) is NOT implemented — the next milestone.
+- A checksum detects corruption; it does NOT authenticate the sender. Capsules are integrity-checked, not
+  authenticated.
+- Full-state snapshots only (no update log / compaction) — intentional for this milestone.
+- The Node Web Locks shim and `fake-indexeddb` are unit-feedback mocks, explicitly not acceptance evidence.
+- The transient-abort-then-retry case is exercised via a real pre-write `maxBytes` failure in Chromium (an
+  honest, observable save error); a fabricated mid-transaction abort is not simulated.
+
+### Next action (browser-persistence)
+
+Final code review writes `.kiro/specs/browser-persistence/.review/review.json`. On verdict `APPROVED` the
+implementation loop stops. Nothing was committed, pushed, or deployed in this step.
+
+## Milestone — browser-persistence review follow-up (four flush/skip/lifecycle/read-guard fixes)
+
+Branch `feat/browser-persistence` (HEAD `d53452f`). This round fixes four independent-review findings in
+`@ghostsync/persist`. The existing architecture is unchanged: full-snapshot IndexedDB persistence, serialized
+single-flight saving, exclusive non-waiting Web Locks, around the UNCHANGED `@ghostsync/kit` SDK. Nothing was
+committed, pushed, or deployed; the intentionally-staged review-ZIP index was left intact and these changes
+are unstaged working-tree edits on top of it.
+
+### The four fixes (each grounded in a reproduced defect)
+
+1. **Flush hangs — FIXED.** Reproduced: open with `maxBytes:4`, set an oversized value, await the first
+   (rejected) flush, let the save settle, call `flush()` again → the SECOND promise hung while state stayed
+   `error`. Root cause: the flush waiter was pushed AFTER `#scheduleSave()`, so a save that failed
+   SYNCHRONOUSLY (the pre-write `maxBytes` check runs before any `await`) rejected an empty waiter list and
+   the later `flush()` stranded. Fix (`src/session.ts`): register the waiter BEFORE triggering the save.
+   Every `flush()` now resolves or rejects; dirty data is retained. Regressions: repeated-failure flush (both
+   reject, no hang) and a SAME-SESSION retry after a transient failure that then succeeds.
+2. **Transactions finish before releasing ownership — FIXED.** Reproduced: `dispose()` resolved, then an
+   existing write transaction completed and flipped state to `saved` AFTER disposal (`db.close()` alone does
+   not abort/await an active transaction). Fix (`src/idb.ts` + `src/session.ts` + `src/locks.ts`):
+   `writeRecord` exposes the live transaction through an internal hook; terminal teardown marks the session
+   terminating (suppressing further state notifications and cancelling queued/hash continuations),
+   aborts/awaits the active transaction and the in-flight save BEFORE releasing the lock, and awaits the
+   ACTUAL `navigator.locks` release so an immediate same-key reopen can acquire it. Concurrent
+   `close()`/`dispose()` share one teardown promise and settle consistently without hanging. Regressions:
+   disposal during hashing, disposal during an in-flight/active transaction, immediate same-key reopen,
+   close/dispose overlap, and (Chromium) disposal during a REAL aborted transaction.
+3. **Skipped writes handled truthfully — FIXED.** Reproduced: force a newer stored sequence so `writeRecord`
+   returns `{ written: false }` (stale-generation skip); `flush()` then falsely resolved `saved` even though
+   the current bytes never reached disk, and reopening lost the edit. Fix (`src/session.ts`): `#saveOnce`
+   honors `result.written` — a skipped write surfaces an explicit `TransactionAbortError`, does NOT advance
+   the persisted marker, and preserves both the in-memory edit and the newer stored record (no clobber, no
+   false `saved`). Regression: a forced-conflict case driven through the session API (planted newer sequence)
+   asserting no false `saved` and that the edit + stored record survive.
+4. **Collection reads and subscriptions guarded — FIXED.** Previously collection READ routes
+   (`get`/`getResult`/`list`/`listResults`/`has`) bypassed the lifecycle and threw a raw destroyed-Yjs-doc
+   error after close. Fix (`src/session.ts`): the guarded collection's reads apply the session's readable
+   guard — including on a handle captured while open — returning a typed `ClosedError` after terminal
+   close/dispose; recovery-only reads stay allowed; `subscribe` is blocked after terminal disposal.
+   Regressions cover every read route, a handle captured before close, session reads/subscribe, and the
+   preserved recovery-only path.
+
+Test-only failure instrumentation (documented as test-only; NOT part of the shipped package surface): a
+scoped `crypto.subtle.digest` wrapper and a second raw IndexedDB connection in the Node unit file, and a
+one-shot real-transaction abort hook (`window.__gs.armWriteAbortOnce`) in the browser harness. No public
+production failure-injection API was added.
+
+### Files changed (permitted set only)
+
+- `packages/persist/src/session.ts` — flush-waiter ordering (fix 1), active-transaction tracking + terminal
+  abort/await ordering + awaited lock release + shared teardown promise + state-notification suppression
+  (fix 2), truthful skipped-write handling (fix 3), readable guard on collection reads + subscribe (fix 4).
+- `packages/persist/src/idb.ts` — `writeRecord` optional `onTransaction` hook exposing the live transaction
+  (internal plumbing for fix 2).
+- `packages/persist/src/locks.ts` — `AcquiredLock.release()` now returns a `Promise` that settles on ACTUAL
+  Web Locks release (fix 2).
+- `packages/persist/tests/flush-lifecycle.test.ts` — NEW: 10 deterministic Node regressions across all four
+  fixes.
+- `packages/persist/e2e/errors-lifecycle.spec.ts` — corrected the "retry" test to retry the SAME session via
+  a REAL aborted transaction; added a repeated-oversized-flush no-hang test.
+- `packages/persist/e2e/lifecycle-fixes.spec.ts` — NEW: real-Chromium regressions (dispose during real
+  aborted transaction, same-key reopen, concurrent close/dispose, skipped-write truthfulness, captured-handle
+  read/subscribe guards).
+- `packages/persist/harness/harness.ts` — test-only harness hooks (`armWriteAbortOnce`,
+  `captureIncidentCollection`, `probeCapturedReads`, `subscribeProbe`).
+- `.kiro/specs/browser-persistence/{requirements,design,tasks}.md` — reflect the corrected
+  flush/skip/lifecycle/read-guard behavior (AC-BP-003-4a, AC-BP-003-5, AC-BP-005-7c, AC-BP-005-7d).
+- `docs/progress.md` — this section.
+
+SDK (`packages/kit/**`), apps, dependencies, the lockfile, and root manifests were NOT modified.
+
+### Exact commands run (Windows PowerShell, from workspace root) + exit codes
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict `tsc --noEmit` clean |
+| 2 | `pnpm.cmd -F @ghostsync/persist test` | 0 | **48 unit tests passed** (7 files; 38 prior + 10 new) |
+| 3 | `pnpm.cmd -F @ghostsync/persist build` | 0 | `tsc -p tsconfig.build.json` emitted `dist` |
+| 4 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | Vite built `harness/dist` (55 modules) |
+| 5 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **21 Chromium tests passed** (7 spec files, 1 worker, ~17.9s) |
+| 6 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **112 SDK tests passed — unchanged** |
+| 7 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings; no conflict markers/whitespace errors) |
+| 8 | `git status --short --branch` | 0 | staged review-ZIP index intact; new/edited files appear as unstaged working-tree changes (`AM`/`??`) |
+
+### Test totals and environment (REPORTED — this run observed these)
+
+- **Persist unit:** 48 passed / 48 (Vitest 5.1.0 on `fake-indexeddb` + a labeled single-process Web Locks
+  mock + real `crypto.subtle`). FAST FEEDBACK — explicitly NOT acceptance evidence.
+- **Persist browser (acceptance):** 21 passed / 21 in real Chromium (real IndexedDB, real `crypto.subtle`
+  SHA-256, real `navigator.locks`).
+- **Chromium version:** `158.0.8127.18` (Chrome for Testing), via `@playwright/test` 1.65.0 / bundled
+  `chromium-1254` (verified by launching the browser and reading `browser.version()`).
+- **SDK regression:** `@ghostsync/kit` 112 passed / 112 — unchanged; no `.skip`/`.todo`/`.only`, no weakened
+  assertions, no edits to `packages/kit`.
+- **Node:** v24.14.0; **pnpm:** 10.34.9.
+
+### Reproduced-defect results
+
+- **flush-hang:** FIXED — repeated oversized flush rejects both times (no hang); same-session transient retry
+  resolves `saved` (unit + Chromium).
+- **dispose-ordering:** FIXED — no late write and no `saved` notification after terminal disposal; same-key
+  reopen acquires the lock; concurrent close/dispose settle consistently (unit + Chromium, incl. a real
+  aborted transaction).
+- **skipped-write truthful:** FIXED — a stale-generation skip surfaces an error, never a false `saved`; the
+  in-memory edit and the newer stored record both survive (unit + Chromium).
+- **read/subscription guards:** FIXED — collection reads (incl. a handle captured before close) and
+  `subscribe` return a typed `ClosedError` after terminal close/dispose; recovery-only reads preserved (unit
+  + Chromium).
+
+### Reported vs independent external verification
+
+The totals, exit codes, and Chromium version above are what THIS run observed on this machine (REPORTED
+evidence). They are NOT a substitute for INDEPENDENT external verification: the orchestrator/user should
+re-run the eight commands from the workspace root to confirm the exit codes, the 48/21/112 totals, and the
+Chromium version independently. No pass counts, version strings, or screenshots were fabricated.
+
+### Known limitations (deferred)
+
+- Cold offline loading (cached assets / service workers) remains the next milestone and is NOT claimed.
+- A checksum detects corruption; it does NOT authenticate the sender. Capsules are integrity-checked, not
+  authenticated.
+- Full-state snapshots only (no update log / compaction) — intentional for this milestone.
+- The Node Web Locks shim and `fake-indexeddb` are unit-feedback mocks, explicitly not acceptance evidence;
+  the real aborted-transaction recovery is exercised in Chromium via a test-only harness hook.
+
+## Milestone — browser-persistence review follow-up 2 (immediate-flush-retry / terminal-txn-event / onStateChange-guard / clean-checkout typecheck)
+
+Branch `feat/browser-persistence` (HEAD `d53452f`). This round fixes the three REMAINING independent-review
+findings in `@ghostsync/persist` plus a clean-checkout typecheck ordering fix. The existing architecture is
+unchanged: full-snapshot IndexedDB persistence, serialized single-flight saving, exclusive non-waiting Web
+Locks, around the UNCHANGED `@ghostsync/kit` SDK. Nothing was committed, pushed, or deployed; the
+intentionally-staged review-ZIP index was LEFT INTACT and these changes are unstaged working-tree edits on
+top of it (`AM`/`??`).
+
+### The fixes (each grounded in a reproduced defect)
+
+1. **Immediate flush retry still hung — FIXED.** Reproduced WITHOUT any inserted delay: open with
+   `maxBytes:4`, `set` an oversized value, `try { await flush() } catch {}`, then `await flush()` again with
+   NO `Promise.resolve()`/timer/polling between the two calls → the second promise hung while state stayed
+   `error`. (A scratch repro timed out at 5s before the fix.) Root cause: the second `flush()` arrived WHILE
+   the failed save worker (`#runSave`) was still unwinding — `#inFlight` was still set, so `flush()` declined
+   to schedule a new save, and the failed worker never serviced the newly-registered waiter, stranding it.
+   Fix (`src/session.ts`): COORDINATE flush-waiter settlement with save-worker cleanup — `#runSave`'s
+   `finally` clears `#inFlight` FIRST and then, if the session still owns its connection and is not tearing
+   down and a flush waiter's target is still unpersisted (`#hasPendingFlushWaiter()`), schedules a FRESH save
+   to service the retry. That fresh save re-attempts the write: it rejects again on a repeated failure
+   (bounded — the rejected waiter is removed, so no reschedule) or resolves on a transient failure that is
+   now gone. Every returned flush promise settles. Regressions (in `tests/flush-lifecycle.test.ts`, NO
+   microtask gap inserted): IMMEDIATE repeated oversized flush (both reject) and IMMEDIATE same-session retry
+   after a transient (forced-digest) failure that then resolves `saved`.
+2. **Await the ACTUAL terminal transaction event — FIXED.** `writeRecord` previously rejected the write
+   promise from `tx.onerror`, which can fire BEFORE `tx.onabort`; disposal could therefore resolve before the
+   transaction's TERMINAL event. Fix (`src/idb.ts`): request/transaction errors are RECORDED
+   (`request.onerror`/`put.onerror`/`get.onerror` capture the first error) but the write promise now SETTLES
+   ONLY on the transaction's terminal event — `tx.oncomplete` (success) or `tx.onabort` (terminal failure),
+   with the recorded error surfaced through `mapTxError`. `readRecord` was made consistent (settles on
+   `oncomplete`/`onabort`, not `onerror`). Because terminal teardown already aborts the active transaction
+   and `await`s the in-flight save, it now provably waits for the terminal event before releasing the Web
+   Lock and resolving `dispose`. Deterministic regression (unit + Chromium) disposes WHILE a REAL aborted
+   write transaction is the active write and asserts the ordering EXPLICITLY:
+   **`tx:abort` → `lock:release` → `dispose:resolve`** (observed in both the Node unit and real Chromium).
+   It also verifies an immediate SAME-KEY reopen succeeds (lock was released) and no late writes/`saved`
+   notifications after disposal. Instrumentation is TEST-SIDE only (a Node `tests/support/tx-abort-hook.ts`
+   real-IndexedDB abort + lock-release observer, and the browser harness's `armWriteAbortOnce` +
+   lock-release/lifecycle log) and documented as test-only; NO public production failure-injection API.
+3. **`onStateChange` guarded after terminal disposal — FIXED.** `onStateChange` previously accepted NEW
+   subscriptions after a terminal close/dispose. Fix (`src/session.ts`): `onStateChange` now calls
+   `#assertReadable()` first, so after terminal close/dispose registering a new save-state subscription
+   throws the typed `ClosedError` (consistent with the read/subscribe guards); recovery-only (after a FAILED
+   close) still allows registration. Regressions assert the typed `ClosedError` after both a terminal
+   `dispose()` and a terminal `close()` (unit), and after terminal disposal in real Chromium.
+4. **Clean-checkout typecheck no longer needs stale `dist` — FIXED.** The harness (included by
+   `tsconfig.json`) imports the package's BUILT public entry `@ghostsync/persist`, so `typecheck` previously
+   needed `packages/persist/dist` to already exist — a stale/missing `dist` broke a clean checkout. Fix
+   (`tsconfig.json`): added a `paths` mapping `"@ghostsync/persist": ["./src/index.ts"]` so typechecking
+   resolves the self-package import to SOURCE, independent of generated output. Verified by removing `dist`
+   entirely and running `typecheck` (exit 0). Typing is NOT weakened — no `any`, no loosened tsconfig, no
+   `@ts-ignore`; `strict`/`exactOptionalPropertyTypes`/`noUncheckedIndexedAccess` are unchanged, and the
+   check now runs against the real source types. The build (`tsconfig.build.json`) is unaffected: it excludes
+   `harness`/`tests` and `src` does not self-import `@ghostsync/persist`, so the mapping changes no emitted
+   output. (TypeScript 7.0.2 removed `baseUrl`; `paths` resolve relative to the tsconfig directory, so no
+   `baseUrl` was added.)
+
+### Files changed (permitted set only)
+
+- `packages/persist/src/session.ts` — flush-waiter/worker-cleanup coordination + `#hasPendingFlushWaiter()`
+  (fix 1); `onStateChange` readable guard (fix 3).
+- `packages/persist/src/idb.ts` — `writeRecord`/`readRecord` settle on the TERMINAL transaction event
+  (`oncomplete`/`onabort`), record request/tx errors without settling from `onerror`, `mapTxError` merges the
+  recorded error (fix 2).
+- `packages/persist/tsconfig.json` — `paths` self-type mapping to `./src/index.ts` (fix 4).
+- `packages/persist/tests/flush-lifecycle.test.ts` — rewrote the fix-1 regressions to IMMEDIATE retries (no
+  microtask gap); added the deterministic `tx-abort → lock-release → dispose-resolve` ordering regression
+  (fix 2); added `onStateChange`-after-terminal `ClosedError` assertions (fix 3).
+- `packages/persist/tests/support/tx-abort-hook.ts` (NEW, untracked) — TEST-ONLY real-IndexedDB one-shot
+  abort + Web Lock release observer for the deterministic Node ordering regression.
+- `packages/persist/harness/harness.ts` — TEST-ONLY lifecycle event log (tx abort + lock release),
+  `flushThenDisposeOrdered`, `onStateChangeProbe`, `lifecycleLog`/`resetLifecycleLog` harness hooks (fix 2/3).
+- `packages/persist/e2e/lifecycle-fixes.spec.ts` — added the Chromium ordering regression and the Chromium
+  `onStateChange`-after-dispose `ClosedError` test.
+- `.kiro/specs/browser-persistence/{requirements,design,tasks}.md` — reflect the corrected
+  immediate-flush-retry / terminal-transaction-event / `onStateChange`-guard behavior and the
+  build/typecheck order.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+SDK (`packages/kit/**`), apps, dependencies, the lockfile, and root manifests were NOT modified.
+
+### Exact commands run (Windows PowerShell, from workspace root) + exit codes (`$LASTEXITCODE`), IN ORDER
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd -F @ghostsync/kit build` | 0 | kit `dist/` emitted |
+| 2 | `pnpm.cmd -F @ghostsync/persist build` | 0 | `tsc -p tsconfig.build.json` emitted `dist` |
+| 3 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict `tsc --noEmit` clean (also verified with `dist` deleted → still 0) |
+| 4 | `pnpm.cmd -F @ghostsync/persist test` | 0 | **50 unit tests passed** (7 files; 48 prior + net new regressions) |
+| 5 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | Vite built `harness/dist` (55 modules) |
+| 6 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **23 Chromium tests passed** (9 spec files, 1 worker, ~15.6s) |
+| 7 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **112 SDK tests passed — unchanged** |
+| 8 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings; no conflict markers/whitespace errors) |
+| 9 | `git status --short --branch` | 0 | staged review-ZIP index INTACT; new/edited files appear as unstaged `AM`/`??` |
+
+### Test totals and environment (REPORTED — this run observed these)
+
+- **Persist unit:** 50 passed / 50 (Vitest 5.1.0 on `fake-indexeddb` + a labeled single-process Web Locks
+  mock + real `crypto.subtle`). FAST FEEDBACK — explicitly NOT acceptance evidence.
+- **Persist browser (acceptance):** 23 passed / 23 in real Chromium (real IndexedDB, real `crypto.subtle`
+  SHA-256, real `navigator.locks`).
+- **Chromium version:** `158.0.8127.18` (Chrome for Testing), via `@playwright/test` 1.65.0 / bundled
+  `chromium-1254` (verified by reading `chrome.exe` ProductVersion at
+  `…/ms-playwright/chromium-1254/chrome-win64/chrome.exe`).
+- **SDK regression:** `@ghostsync/kit` 112 passed / 112 — unchanged; no `.skip`/`.todo`/`.only`, no weakened
+  assertions, no edits to `packages/kit`.
+- **Node:** v24.14.0; **pnpm:** 10.34.9.
+
+### Reproduced-defect results
+
+- **immediate-flush-retry:** FIXED — with NO inserted delay, the immediate second flush promptly REJECTS
+  (repeated failure) and an immediate same-session retry after a transient failure RESOLVES `saved`; every
+  flush promise settles (unit + Chromium). A pre-fix scratch repro hung (5s timeout); post-fix it passes.
+- **terminal-transaction-event / disposal ordering:** FIXED — the write lifecycle settles on the terminal
+  `oncomplete`/`onabort` event; teardown waits for it; the OBSERVED order is
+  **`tx:abort` → `lock:release` → `dispose:resolve`** (asserted explicitly in both the Node unit and real
+  Chromium); immediate same-key reopen works; no late writes/notifications after disposal.
+- **onStateChange guard:** FIXED — registering a new `onStateChange` subscription after terminal
+  close/dispose returns the typed `ClosedError` (unit + Chromium).
+- **clean-checkout typecheck:** FIXED — `typecheck` is correct with no `dist` present (verified by deleting
+  `dist` then running it); typing not weakened.
+
+### Observed transaction / disposal event order
+
+Recorded by TEST-SIDE instrumentation (append-only log) in BOTH the Node unit
+(`tests/flush-lifecycle.test.ts` via `tests/support/tx-abort-hook.ts`) and real Chromium
+(`e2e/lifecycle-fixes.spec.ts` via the harness lifecycle log):
+
+```
+["tx:abort", "lock:release", "dispose:resolve"]
+```
+
+i.e. the write transaction's TERMINAL abort event fires, THEN the Web Lock is actually released, THEN
+`dispose()` resolves.
+
+### Reported vs independent external verification
+
+The totals, exit codes, observed event order, and Chromium version above are what THIS run observed on this
+machine (REPORTED evidence). They are NOT a substitute for INDEPENDENT external verification: the
+orchestrator/user should re-run the nine commands from the workspace root to confirm the exit codes, the
+50/23/112 totals, the event order, and the Chromium version independently. No pass counts, version strings,
+event orders, or screenshots were fabricated.
+
+### Known limitations (unchanged from the prior round)
+
+- Cold offline loading (cached assets / service workers) remains the next milestone and is NOT claimed.
+- A checksum detects corruption; it does NOT authenticate the sender. Capsules are integrity-checked, not
+  authenticated.
+- Full-state snapshots only (no update log / compaction) — intentional for this milestone.
+- The Node Web Locks shim and `fake-indexeddb` are unit-feedback mocks, explicitly NOT acceptance evidence;
+  the real aborted-transaction recovery and the terminal-event ordering are exercised in Chromium via
+  test-only harness instrumentation.

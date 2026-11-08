@@ -1,0 +1,38 @@
+{
+  "name": "@ghostsync/persist",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "GhostSync Persist — IndexedDB browser persistence for the GhostSync Kit.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json",
+    "build:harness": "vite build",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@ghostsync/kit": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "24.19.2",
+    "fake-indexeddb": "6.2.7",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}

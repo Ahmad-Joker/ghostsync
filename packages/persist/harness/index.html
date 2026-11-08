@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GhostSync Persist — Browser Harness</title>
+    <style>
+      body {
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        margin: 24px;
+        color: #111;
+        background: #fafafa;
+      }
+      h1 {
+        font-size: 16px;
+      }
+      #status {
+        padding: 8px 12px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        background: #fff;
+      }
+      .ready {
+        color: #0a7d2c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GhostSync Persist — Browser Harness</h1>
+    <div id="status">booting…</div>
+    <p>
+      This page is a test harness (not an application UI). It exposes
+      <code>window.__gs</code> for the Playwright acceptance suite. Readiness is
+      signalled by <code>window.__gs</code> being defined; tests await real
+      lifecycle events (open resolved, flush resolved, transaction oncomplete).
+    </p>
+    <script type="module" src="./harness.ts"></script>
+  </body>
+</html>
