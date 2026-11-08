@@ -31,6 +31,33 @@
   `dist/`), `docs/progress.md` with PLANNED→IMPLEMENTED→TESTED, commands + exit
   codes, totals, Chromium version, screenshot path, limitations. (REQ-OA-006)
 
+## Defect-fix pass (scope-specific cache naming + restricted navigation)
+
+- [x] T11 — FIX 1: make cache ownership specific to the registration SCOPE in
+  `scripts/sw-precache-plugin.ts` — cache name =
+  `ghostsync-persist-harness-<scope-pathname>::<version>`; shared
+  `cleanupThisScope()` deletes ONLY older caches of THIS exact scope on both
+  activation and the `GHOSTSYNC_CLEANUP` message (never another scope / unrelated
+  / IndexedDB / other registration). (REQ-OA-004, AC-OA-004-3/004-4)
+- [x] T12 — FIX 2: restrict the navigation-shell fallback to the DOCUMENTED
+  routes only (scope-relative deployment root + `index.html`); any other
+  navigation (including a missing-`.js` navigation) is left to the network — no
+  catch-all HTML. (REQ-OA-003, AC-OA-003-2/003-3)
+- [x] T13 — Multi-scope serving for the regression: dependency-free
+  `e2e/static-multiscope-server.mjs` serves the built harness at `/`,
+  `/deploy-p1/`, `/deploy-p2/`; wired into `playwright.config.ts` webServer
+  (replaces `vite preview`). (REQ-OA-005)
+- [x] T14 — Regression A (real Chromium): two deployment scopes on one origin own
+  SEPARATE caches; cleanup/activation in P1 preserves P2's cache + offline boot.
+  (AC-OA-005-8)
+- [x] T15 — Regression B (real Chromium): unknown navigation + missing-`.js`
+  navigation receive NO HTML shell; a known precached asset still serves from the
+  SW (`fromServiceWorker()`). Existing boot/restore + screenshot preserved.
+  (AC-OA-005-9)
+- [x] T16 — Update the existing scoped-cleanup test's seeded stale-cache name to
+  the scope-specific prefix (derived from the SW-reported active cache name) so
+  it still exercises same-scope cleanup after FIX 1. (AC-OA-005-6)
+
 ## Verification commands (run from workspace root, PowerShell)
 1. `pnpm.cmd install --frozen-lockfile`
 2. `pnpm.cmd -F @ghostsync/kit build`

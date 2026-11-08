@@ -32,8 +32,15 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
+  // A dependency-free multi-scope static server (e2e/static-multiscope-server.mjs)
+  // serves the BUILT harness dist at the origin ROOT ("/") AND under two
+  // sub-paths ("/deploy-p1/", "/deploy-p2/") on the SAME origin. The sub-paths
+  // let the scope-isolation regression deploy the SAME build twice and prove the
+  // scope-specific Service Worker cache namespaces stay independent. `vite
+  // preview` only serves the root, so a plain static server replaces it here.
   webServer: {
-    command: `pnpm.cmd exec vite preview --port ${PORT} --strictPort`,
+    command: `node e2e/static-multiscope-server.mjs`,
+    env: { GHOSTSYNC_HARNESS_PORT: String(PORT) },
     port: PORT,
     reuseExistingServer: false,
     timeout: 60_000,

@@ -49,11 +49,14 @@ return visit loads offline.
 
 ### REQ-OA-003 — Fetch behavior
 - **AC-OA-003-1** Cached shell + known assets are served when offline.
-- **AC-OA-003-2** Navigation requests (harness root and `index.html`) fall back to
-  the cached shell.
+- **AC-OA-003-2** Navigation requests are served the cached shell ONLY for the
+  DOCUMENTED harness routes (the scope-relative deployment root and
+  `index.html`). The shell is NOT returned for any other navigation path.
 - **AC-OA-003-3** Unknown resources are NOT masked — a missing `.js` or unrelated
   request is left to the network so its real 404/failure stays visible (no SPA
-  catch-all returning HTML for assets).
+  catch-all returning HTML for assets). This INCLUDES a missing-`.js` path
+  requested as a NAVIGATION: it must NOT receive the cached HTML shell; it misses
+  → network → an honest offline failure.
 - **AC-OA-003-4** Existing persistence behavior and diagnostics are preserved.
 
 ### REQ-OA-004 — Safe updates
@@ -62,9 +65,17 @@ return visit loads offline.
 - **AC-OA-004-2** No automatic `skipWaiting`; a new worker waits so old pages never
   mix with new assets. Taking control is via an EXPLICIT prompt
   (`__gsOffline.applyUpdate()`), on next navigation after clients release.
-- **AC-OA-004-3** On activation, clean ONLY caches owned by this harness scope
-  (the `ghostsync-persist-harness-` prefix) that are not the current version.
-- **AC-OA-004-4** Never delete IndexedDB, unrelated caches, or other registrations.
+- **AC-OA-004-3** Cache ownership is specific to the actual registration SCOPE:
+  the cache name is `ghostsync-persist-harness-` + the worker's
+  `self.registration.scope` PATHNAME + `::` + the content-derived version. Two
+  deployments of the SAME build under DIFFERENT paths on the SAME origin
+  therefore own SEPARATE cache namespaces even with IDENTICAL build contents. On
+  activation (and on the explicit `GHOSTSYNC_CLEANUP` message), clean ONLY caches
+  whose name begins with THIS exact scope prefix that are not the current
+  version. The content-derived version still distinguishes old-vs-new WITHIN a
+  scope; the scope distinguishes DEPLOYMENTS on one origin.
+- **AC-OA-004-4** Cleanup never deletes a cache owned by ANOTHER scope, an
+  unrelated cache, IndexedDB, or another registration.
 
 ### REQ-OA-005 — Real Chromium acceptance
 - **AC-OA-005-1** From a CLEAN context: load online, await complete offline
@@ -85,6 +96,14 @@ return visit loads offline.
 - **AC-OA-005-7** HONESTY: no `route.fulfill`, injected page HTML, or mocked
   service worker is used to manufacture offline success; failure-injection tests
   are clearly separated and labeled.
+- **AC-OA-005-8** (FIX 1 regression) Two distinct deployment SCOPES on one origin
+  (served under two sub-paths of the SAME built harness) own SEPARATE caches;
+  running cleanup/activation in one scope PRESERVES the other scope's cache and
+  its ability to boot offline (document + asset still `fromServiceWorker()`).
+- **AC-OA-005-9** (FIX 2 regression) An unknown navigation path and a
+  missing-`.js` path requested as a NAVIGATION do NOT receive the harness HTML
+  shell (offline, they fail at the network — no masked 200-HTML), while a KNOWN
+  precached asset STILL serves from the SW cache (`fromServiceWorker() === true`).
 
 ### REQ-OA-006 — Regression + documentation
 - **AC-OA-006-1** All existing coverage preserved + meaningful: 112 kit, 50 persist

@@ -21,23 +21,37 @@ HTML plugin has already added `index.html`). It:
 - emits `precache-manifest.json` (inspectable) and `sw.js` (manifest inlined),
 - emits a TEST-ONLY `sw-install-fail.js` whose install genuinely rejects.
 
-Cache naming: prefix `ghostsync-persist-harness-`; cache name =
-`${prefix}${cacheVersion}`.
+Cache naming (scope-specific — FIX 1): base prefix
+`ghostsync-persist-harness-`, combined with the worker's registration-scope
+PATHNAME to form the per-scope owner prefix
+`SCOPE_PREFIX = ghostsync-persist-harness-<scope-pathname>::`, and the final
+cache name `CACHE_NAME = SCOPE_PREFIX + cacheVersion`. Because the scope path is
+part of the name, two deployments of the SAME build under DIFFERENT paths on one
+origin own SEPARATE cache namespaces even with byte-identical contents; the
+content-derived version only distinguishes old-vs-new WITHIN a single scope. The
+scope path is read at runtime from `self.registration.scope`, so the generated
+worker needs no build-time knowledge of where it is deployed.
 
 ### 2. Generated Service Worker — `dist/sw.js` (plain classic worker, no imports)
 - **install**: fetch every precache URL with `cache:"reload"`; only AFTER all
   fetches are OK does it `cache.put` them. Any failure → install REJECTS →
   browser discards the worker → the previously installed version is kept
   (atomic precache; AC-OA-004-1). No automatic `skipWaiting` (AC-OA-004-2).
-- **activate**: delete ONLY caches whose name starts with the scope prefix and is
-  not the current version, then `clients.claim()` (AC-OA-004-3/004-4).
+- **activate**: delete ONLY caches whose name starts with THIS exact
+  `SCOPE_PREFIX` and is not the current version (never another scope's caches),
+  then `clients.claim()` (AC-OA-004-3/004-4). Shared helper `cleanupThisScope()`.
 - **message**: `GHOSTSYNC_PRECACHE_STATUS` replies whether every manifest entry is
   present in the current cache; `GHOSTSYNC_SKIP_WAITING` is the explicit,
-  user-driven takeover; `GHOSTSYNC_CLEANUP` runs the scoped cleanup on demand
-  (deterministic test of the cleanup path).
-- **fetch**: GET + same-origin + in-scope only. Navigation requests →
-  cached shell (`index.html`); precached asset URLs → cache-first; everything
-  else is NOT intercepted, so real 404s/failures stay visible (AC-OA-003-3). URLs
+  user-driven takeover; `GHOSTSYNC_CLEANUP` runs the SAME scope-local
+  `cleanupThisScope()` on demand (deterministic test of the cleanup path) and
+  replies `GHOSTSYNC_CLEANUP_DONE`.
+- **fetch**: GET + same-origin + in-scope only. Navigation requests → cached
+  shell (`index.html`) ONLY for the DOCUMENTED routes — the scope-relative
+  deployment root (`new URL("", scope)`) and `index.html` (FIX 2). Any other
+  navigation path (including a missing-`.js` requested as a navigation) is NOT
+  served the shell: it falls through to the network so offline it fails visibly
+  (no catch-all HTML; AC-OA-003-2/003-3). Precached asset URLs → cache-first;
+  everything else is NOT intercepted, so real 404s/failures stay visible. URLs
   are resolved against `self.registration.scope` so a subpath deployment works.
 
 ### 3. Harness registration + readiness — `packages/persist/harness/sw-register.ts`
@@ -70,6 +84,20 @@ e2e `awaitOfflineReady(page)` waits for `window.__gs.ready` then
 `window.__gsOffline.ready`. Failure surfaces a terminal `failed` state the tests
 also await, so no test uses an arbitrary sleep.
 
+## Multi-scope acceptance serving (FIX 1 regression)
+The harness is built with Vite `base: "./"`, so every referenced URL (assets,
+`./sw.js`, the SW registration `scope: "./"`) is relative to the document
+location. A dependency-free Node static server
+(`e2e/static-multiscope-server.mjs`, replacing `vite preview` in
+`playwright.config.ts`) serves the SAME built `harness/dist` at the origin ROOT
+(`/`, used by all existing tests) AND under two sub-paths (`/deploy-p1/`,
+`/deploy-p2/`). Serving one build under two sub-paths reproduces the real-world
+collision FIX 1 addresses: a worker registered at `/deploy-p1/sw.js` can only
+ever control `/deploy-p1/` (the browser's own scope restriction), and its
+scope-specific cache name keeps its cache separate from `/deploy-p2/`'s. A
+missing file returns an honest 404 (never a fallback to `index.html`), matching
+the SW's no-catch-all policy.
+
 ## Separation of concerns
 - Merge logic: `@ghostsync/kit` (untouched).
 - Storage: IndexedDB in `packages/persist/src` (untouched, read-only here).
@@ -91,6 +119,8 @@ install rejects. "Previously-initialized profile reopens offline" is promised;
 | AC-OA-002-* | `offline-assets.spec.ts` readiness asserts + install-failure test |
 | AC-OA-003-1/2/3 | cold-boot offline reload + `fromServiceWorker()` asserts |
 | AC-OA-004-1/2 | atomic install (reject keeps old) + no auto skipWaiting |
-| AC-OA-004-3/4 | scoped-cleanup test (unrelated cache + IndexedDB survive) |
-| AC-OA-005-1..7 | `offline-assets.spec.ts` five tests |
+| AC-OA-004-3/4 | scope-specific cleanup test (unrelated cache + IndexedDB survive; stale same-scope cache cleaned) |
+| AC-OA-005-1..7 | `offline-assets.spec.ts` offline boot/restore, lock-reopen, cleanup, negative cases |
+| AC-OA-005-8 (FIX 1) | two-scope regression: `/deploy-p1/` + `/deploy-p2/` own separate caches; cleanup in P1 preserves P2's cache + offline boot |
+| AC-OA-005-9 (FIX 2) | restricted-nav regression: unknown + missing-`.js` navigations get no shell; known precached asset still `fromServiceWorker()` |
 | AC-OA-006-* | full suite run + `docs/progress.md` |

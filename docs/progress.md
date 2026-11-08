@@ -1610,3 +1610,216 @@ verification.
 
 Proceed to ONE final code review of this implementation. Nothing was pushed, reset, or amended; work is
 committed on `feat/offline-assets` with the evidence above recorded in the commit message.
+
+## offline-assets — SCREENSHOT EVIDENCE ONLY (feat/offline-assets, working-tree only)
+
+**Scope: screenshot evidence only.** This pass fixes HOW the offline cold-boot acceptance screenshot is
+captured and attached, and copies the real captured artifact to the Windows Desktop. It does NOT change
+CRDT/persistence/SDK logic, app code, dependencies, the lockfile, or `package.json`. HEAD remains
+`a376096` (unchanged); all edits are UNSTAGED working-tree changes — nothing was staged, committed,
+amended, reset, or pushed. The honest browser-test history above is retained and not rewritten.
+
+### Observed root cause of the earlier missing standalone screenshot (confirmed, not guessed)
+
+The test previously called `page.screenshot({ path: "playwright-report/offline-restored.png" })`. That
+RELATIVE path resolves against the Playwright test-process cwd (`packages/persist`), i.e. into the SAME
+`playwright-report/` directory that the HTML reporter manages
+(`reporter: [["list"], ["html", { outputFolder: "playwright-report" }]]` in
+`packages/persist/playwright.config.ts`). The config sets no custom `outputDir` (default is
+`test-results/`). After a full run I observed `packages/persist/playwright-report/` contained ONLY
+`index.html` and `packages/persist/test-results/` contained only `.last-run.json` — the standalone
+`offline-restored.png` was absent everywhere under `packages/persist` (including gitignored paths). The
+HTML reporter rebuilds/overwrites its `outputFolder` when it writes the report at run end, so a stray
+PNG written into that same folder does not survive. The write targeted a reporter-managed location
+rather than a Playwright-managed per-test output path, so the artifact was not durable.
+
+### New capture/attach mechanism
+
+- The offline cold-boot test (`previously-initialized profile boots + restores ...`) now receives
+  `testInfo` and captures via Playwright's MANAGED output path:
+  `const file = testInfo.outputPath("offline-restored.png"); await page.screenshot({ path: file, fullPage: true });`
+- It then ATTACHES the real PNG to the report:
+  `await testInfo.attach("offline-restored", { path: file, contentType: "image/png" });`
+- The capture happens ONLY AFTER the test's assertions confirm, in order: (a) networking remains disabled
+  — an in-page `fetch` to a bogus path must reject (`offline`), and the context is never re-enabled;
+  (b) the offline reload navigation + JS asset were SERVICE-WORKER-served
+  (`response.fromServiceWorker() === true` for both, asserted earlier in the same test); and (c) the saved
+  LEGACY (`status`, remote key `a`) and STRUCTURED (`incident i1`) data actually restored — the test
+  reopens the saved replica once more (still offline) and asserts
+  `legacyStatus === "resolved-offline"`, `legacyRemote === 1`,
+  `incident === { id: "i1", title: "Spill", priority: 1 }` before the screenshot is taken.
+
+### Harness diagnostic panel: NOT added (existing panel reused)
+
+No new harness panel was added. The harness already renders restored values visibly in the
+`#restored-data` DOM node via `window.__gs.showRestored(...)`. The test now populates that node from the
+REAL session read-back (the live `get`/`getIncident` values of the just-reopened replica), so the
+screenshot visibly shows the genuine restored legacy + structured values — no hardcoded success data,
+no fabricated overlay, no app UI. `packages/persist/harness/**` was therefore not modified and no harness
+rebuild was required.
+
+### Resolved artifact paths + sizes (reported-this-run)
+
+- Captured PNG (Playwright per-test output dir):
+  `C:\Users\ahmad\ghostsync\packages\persist\test-results\offline-assets-offline-col-bb88a-ives-another-offline-reload-chromium\offline-restored.png`
+  — **25443 bytes**, PNG signature first 8 bytes `89 50 4E 47 0D 0A 1A 0A` (valid).
+- Desktop copy (resolved via `[Environment]::GetFolderPath('Desktop')` = `C:\Users\ahmad\OneDrive\Desktop`,
+  a OneDrive-redirected Desktop): `C:\Users\ahmad\OneDrive\Desktop\ghostsync-offline-restored.png`
+  — **25443 bytes**, PNG signature `89 50 4E 47 0D 0A 1A 0A` (valid). This is a byte-for-byte copy of the
+  real captured PNG from the test output dir, not a regenerated/placeholder image. The rendered
+  `#restored-data` line reads:
+  `legacy status=resolved-offline | legacy a=1 | incident i1={id:i1, title:Spill, priority:1} (OFFLINE, SW-served)`.
+
+### Files changed (permitted set only)
+
+- `packages/persist/e2e/offline-assets.spec.ts` — `testInfo` param; managed `outputPath` capture;
+  `testInfo.attach`; assertion-gated timing (offline / SW-served / restored read-back) before capture.
+- `docs/progress.md` — this section.
+
+(`packages/persist/harness/**` was NOT changed; no other files were touched.)
+
+### Verification commands and results (Windows PowerShell, from workspace root; `$LASTEXITCODE`)
+
+| Command | Exit code | Result (reported-this-run) |
+| --- | --- | --- |
+| `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict typecheck clean |
+| `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **28 passed** (14.2s); no `.skip`/`.only`/`.todo`, no weakened assertions, no timeout changes |
+| `git diff --check` | 0 | clean (only a cosmetic LF->CRLF warning on the spec file) |
+| `git status --short --branch` | 0 | on `feat/offline-assets`; only ` M packages/persist/e2e/offline-assets.spec.ts` tracked-modified; `.agents/` and `.kiro/specs/offline-assets/.review/` untracked (left untouched); nothing staged |
+| `git log -1 --oneline` | 0 | still `a376096` (HEAD unchanged) |
+
+`build:harness` was intentionally NOT run — harness contents did not change. The screenshot
+file-existence / nonempty / PNG-signature check and the Desktop-copy verification were performed via
+PowerShell and are reported above.
+
+### Honesty boundary
+
+The 28/28 pass count, the resolved paths, the byte sizes, and the PNG signatures are **reported-this-run**
+from actual executions on this machine (Chromium ran successfully; nothing was fabricated). Independent
+external verification is a reviewer re-running the commands above and re-reading the captured + Desktop
+PNGs. A content/PNG signature DETECTS a valid-PNG artifact; it does not by itself authenticate provenance.
+
+### Next action (offline-assets screenshot evidence)
+
+Proceed to ONE review of this screenshot-evidence pass (handshake under
+`C:\Users\ahmad\ghostsync\.review-artifacts\offline-screenshot-review.json`). Nothing was committed,
+pushed, reset, or amended; HEAD remains `a376096` and all edits remain unstaged working-tree changes.
+
+## offline-assets — two defect fixes (scope-specific cache + restricted navigation) (feat/offline-assets)
+
+A bounded defect-fix pass on the offline-assets milestone of `@ghostsync/persist`. Two independently
+reproduced defects in the build-generated Service Worker were fixed, two real-Chromium regressions were
+added, and the full verify sequence was run on this machine. The production harness behavior is otherwise
+PRESERVED (build-generated SW, content-derived precache version, scope-relative URLs, readiness handshake,
+real offline boot, IndexedDB restoration, managed `offline-restored.png` via `testInfo.outputPath` +
+`testInfo.attach`). No `packages/kit/**`, `packages/persist/src/**`, apps, dependencies, lockfile, or
+`package.json` changes. **Nothing was committed, pushed, reset, amended, or unstaged.** HEAD remains
+`a376096`; the four pre-existing STAGED entries are untouched (my edits layer as additional UNSTAGED
+working-tree changes). `.agents/` left untouched.
+
+### The two defects and the fixes
+
+- **FIX 1 — cache ownership was build-content-only, so two deployments of the SAME build under DIFFERENT
+  paths on one origin would COLLIDE on one cache namespace.** The cache name is now specific to the actual
+  registration SCOPE: `ghostsync-persist-harness-` + `self.registration.scope` PATHNAME + `::` +
+  content-derived version. Two deployments under different paths on the same origin therefore own SEPARATE
+  cache namespaces even with IDENTICAL build contents; the content-derived version still distinguishes
+  old-vs-new WITHIN a scope. A shared `cleanupThisScope()` deletes ONLY older caches whose name begins with
+  THIS exact scope prefix, on BOTH activation and the explicit `GHOSTSYNC_CLEANUP` message — never another
+  scope's caches, never unrelated caches, never IndexedDB, never another registration. The TEST-ONLY
+  failing worker's cache name was updated to the same scope-specific form for consistency.
+- **FIX 2 — the navigation fallback could serve the cached HTML shell too broadly.** The shell is now
+  returned ONLY for the DOCUMENTED navigation routes (the scope-relative deployment root `new URL("",
+  scope)` and `index.html`). Any other navigation path — INCLUDING a missing-`.js` path requested as a
+  navigation — is NOT served the shell: it falls through to the network, so offline it fails VISIBLY (a
+  real miss, not a masked 200-HTML). Normal precached ASSET delivery is preserved (known hashed assets
+  still serve cache-first from the SW).
+
+### Regressions added (real Chromium, in `e2e/offline-assets.spec.ts`)
+
+- **A — scope isolation (AC-OA-005-8).** Deploy the SAME built harness under two sub-paths on one origin
+  (`/deploy-p1/`, `/deploy-p2/`); assert the two scopes report DIFFERENT scope-specific cache names and
+  both caches exist; run cleanup/activation in P1 (via `GHOSTSYNC_CLEANUP`, awaiting
+  `GHOSTSYNC_CLEANUP_DONE`); assert P2's cache SURVIVES and P2 can still boot offline (document + JS asset
+  both `response.fromServiceWorker() === true`) and still reports its own unchanged cache name.
+- **B — restricted navigation (AC-OA-005-9).** Offline, a REAL navigation (`page.goto`, genuine
+  `mode:"navigate"`) to an unknown path and to a missing-`.js` path do NOT boot the harness shell and fail
+  at the network (no masked HTML); after returning to the documented root (served by the SW), a KNOWN
+  precached asset still serves from the SW cache (`fromServiceWorker() === true`). (Scripted `fetch` cannot
+  use `mode:"navigate"` — it throws — so the regression uses actual navigations.)
+- The existing scoped-cleanup test (AC-OA-005-6) was updated to seed its stale cache under the
+  scope-specific prefix (derived from the SW-reported active cache name) so it still exercises same-scope
+  cleanup after FIX 1 — intent unchanged, no weakened assertion.
+- The existing offline root/index boot + restored-data (legacy + structured) assertions and the managed
+  `offline-restored.png` capture + `testInfo.attach` are PRESERVED and still pass.
+
+### Multi-scope serving
+
+The harness is built with Vite `base: "./"` (all referenced URLs relative). A new dependency-free Node
+static server `packages/persist/e2e/static-multiscope-server.mjs` serves the built `harness/dist` at the
+origin ROOT (`/`, used by all existing tests) AND under `/deploy-p1/` and `/deploy-p2/` on the same origin,
+replacing `vite preview` in `playwright.config.ts` webServer (`vite preview` serves only the root). A
+worker registered at `/deploy-pN/sw.js` can only control `/deploy-pN/` (the browser's scope restriction),
+which — with the scope-specific cache name — is exactly the isolation FIX 1 guarantees. A missing file
+returns an honest 404 (never a fallback to `index.html`), matching the SW's no-catch-all policy.
+
+### Files changed (permitted set only)
+
+- `packages/persist/scripts/sw-precache-plugin.ts` — FIX 1 (scope-specific `scopePrefix()`/`cacheName()` +
+  shared `cleanupThisScope()` used by activate and `GHOSTSYNC_CLEANUP`; status/install use `cacheName()`;
+  failing-worker cache name updated) + FIX 2 (`documentedNavUrls()`; navigation shell served only for those
+  routes).
+- `packages/persist/e2e/offline-assets.spec.ts` — the two new regressions (A, B) + updated stale-cache
+  seed name in the existing cleanup test. (This file is also one of the pre-existing STAGED entries, so it
+  now shows BOTH a staged modification and these additional unstaged modifications — expected.)
+- `packages/persist/e2e/static-multiscope-server.mjs` (new, untracked) — dependency-free multi-scope static
+  server.
+- `packages/persist/playwright.config.ts` — webServer uses the multi-scope server (replaces `vite
+  preview`); `GHOSTSYNC_HARNESS_PORT` env.
+- `.kiro/specs/offline-assets/{requirements,design,tasks}.md` — AC-OA-003-2/003-3 (documented-route nav),
+  AC-OA-004-3/004-4 (scope-specific cache ownership), new AC-OA-005-8/005-9, design cache-naming + fetch +
+  multi-scope-serving sections + AC→test mapping, tasks T11–T16.
+- `docs/progress.md` — this section.
+
+No `packages/persist/harness/**` change was needed (the existing `#restored-data` panel and readiness
+wiring are reused). No `packages/persist/src/**`, `packages/kit/**`, apps, dependency, lockfile, or
+`package.json` change.
+
+### Verification commands and results (Windows PowerShell, from workspace root; exit = `$LASTEXITCODE`) — reported-this-run
+
+| # | Command | Exit | Result (reported-this-run) |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **42 files / 112 tests passed, 0 failed** |
+| 2 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict typecheck clean (src + tests + harness + e2e + config) |
+| 3 | `pnpm.cmd -F @ghostsync/persist test` | 0 | **7 files / 50 tests passed, 0 failed** |
+| 4 | `pnpm.cmd -F @ghostsync/persist build` | 0 | `dist/` emitted (package build) |
+| 5 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | harness `dist/` emitted incl. regenerated `sw.js` + `precache-manifest.json` |
+| 6 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **30 passed** (17.7s), 0 failed; +2 vs the prior 28 (the two new regressions). No `.skip`/`.only`/`.todo`, no weakened assertions, no timeout increases |
+| 7 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings) |
+| 8 | `git status --short` | 0 | HEAD-staged entries intact; my edits unstaged; `static-multiscope-server.mjs` untracked; `.agents/` left untouched |
+| 9 | `git log -1 --oneline` | 0 | still `a376096` (HEAD unchanged) |
+
+Chromium: Playwright **1.65.0** (Chrome for Testing 158, per the verified environment). Both new
+regressions PASS: scope-isolation cleanup (test 18) and unknown/missing-`.js` navigation (test 19).
+
+### Screenshot evidence (preserved)
+
+The managed offline screenshot is still captured and attached by the existing offline-boot test:
+`C:\Users\ahmad\ghostsync\packages\persist\test-results\offline-assets-offline-col-bb88a-ives-another-offline-reload-chromium\offline-restored.png`
+— **25443 bytes**, PNG signature first 8 bytes `137 80 78 71 13 10 26 10` (valid). The capture path +
+`testInfo.attach` were not regressed.
+
+### Honesty boundary
+
+The 112 / 50 / 30 counts, exit codes, both regression outcomes, the Chromium version, and the screenshot
+path/size/signature are **reported-this-run** from actual executions on this machine (Chromium ran
+successfully; nothing was fabricated). Independent external verification is a reviewer re-running commands
+1–9 above on a clean checkout. A content/PNG-signature check DETECTS a valid artifact; it does not by
+itself authenticate provenance. A checksum detects corruption; it does not authenticate the sender.
+
+### Next action (offline-assets defect fixes)
+
+Proceed to ONE focused review of this defect-fix diff. The loop stops when
+`.kiro/specs/offline-assets/.review/final-review.json` records verdict `APPROVED`. Nothing was committed,
+pushed, reset, amended, or unstaged; HEAD remains `a376096` and all edits (besides the pre-existing staged
+entries) remain unstaged working-tree changes.
