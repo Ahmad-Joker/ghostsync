@@ -1,0 +1,13 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    { "id": "F1", "severity": "MEDIUM", "title": "TextDecoder ignoreBOM:false strips (not keeps) a BOM, shifting UTF-8 offsets; use ignoreBOM:true and reject BOM as Malformed", "where": "design.md Metadata token scan step 1" },
+    { "id": "F2", "severity": "MEDIUM", "title": "pnpm -F @ghostsync/persist typecheck (sole evidence for AC-CAP-003-5) missing from verification commands and ordering after capsule build", "where": "tasks.md verification commands, 6.2, 7.1" },
+    { "id": "F3", "severity": "MEDIUM", "title": "encodeCapsule: input.documentId vs TransportUpdate.documentId relation unspecified; require equality else TypeError", "where": "design.md Public API / Validation rules; tasks 3.1" },
+    { "id": "F4", "severity": "MEDIUM", "title": "AC-CAP-009-3 Chromium coverage conditional ('if the harness can open with small maxBytes'); harness has no maxBytes option", "where": "tasks.md mapping AC-CAP-009-3, 6.2, 6.4" },
+    { "id": "F5", "severity": "NIT", "title": "Version byte 0 / other values unspecified", "where": "design.md Validation order step 2" },
+    { "id": "F6", "severity": "NIT", "title": "crypto.subtle.digest failure classified Malformed blurs TypeError/CapsuleError split", "where": "design.md Error handling table" },
+    { "id": "F7", "severity": "NIT", "title": "AC 10a listed after 11", "where": "requirements.md Integrity ACs" }
+  ],
+  "reviewDoc": "C:\\Users\\ahmad\\ghostsync\\.kiro\\specs\\file-capsules\\.review\\correction-3-review.md"
+}

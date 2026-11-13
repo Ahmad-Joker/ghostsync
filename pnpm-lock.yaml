@@ -14,6 +14,25 @@ importers:
 
   apps/studio: {}
 
+  packages/capsule:
+    dependencies:
+      '@ghostsync/kit':
+        specifier: workspace:*
+        version: link:../kit
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      fast-check:
+        specifier: 4.10.2
+        version: 4.10.2
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@24.19.2)(vite@8.3.6(@types/node@24.19.2))
+
   packages/kit:
     dependencies:
       yjs:
@@ -39,6 +58,9 @@ importers:
         specifier: workspace:*
         version: link:../kit
     devDependencies:
+      '@ghostsync/capsule':
+        specifier: workspace:*
+        version: link:../capsule
       '@playwright/test':
         specifier: 1.65.0
         version: 1.65.0

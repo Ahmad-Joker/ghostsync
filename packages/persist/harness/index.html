@@ -33,6 +33,26 @@
         border-radius: 6px;
         background: #fff;
       }
+      #capsule-panel {
+        margin-top: 12px;
+        padding: 8px 12px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        background: #fff;
+      }
+      #capsule-panel label,
+      #capsule-panel button {
+        margin-right: 8px;
+      }
+      #capsule-panel button:focus-visible,
+      #capsule-panel input:focus-visible {
+        outline: 3px solid #1a56db;
+        outline-offset: 2px;
+      }
+      #capsule-result {
+        margin-top: 8px;
+        min-height: 1.5em;
+      }
     </style>
   </head>
   <body>
@@ -40,6 +60,26 @@
     <div id="status">booting…</div>
     <div id="offline-status">offline: registering…</div>
     <div id="restored-data">restored-data: (none)</div>
+    <section id="capsule-panel" aria-labelledby="capsule-heading">
+      <h2 id="capsule-heading">File capsules</h2>
+      <p>
+        <label for="capsule-handle">Session handle</label>
+        <input id="capsule-handle" type="text" value="s" size="8" />
+        <button id="capsule-download" type="button">Download capsule (.gscap)</button>
+      </p>
+      <p>
+        <label for="capsule-file">Import capsule file</label>
+        <!-- accept is a UI hint only; the capsule is validated from its bytes. -->
+        <input
+          id="capsule-file"
+          type="file"
+          accept=".gscap,application/vnd.ghostsync.capsule"
+        />
+      </p>
+      <div id="capsule-result" role="status" aria-live="polite" data-state="idle">
+        capsule: idle
+      </div>
+    </section>
     <p>
       This page is a test harness (not an application UI). It exposes
       <code>window.__gs</code> for the Playwright acceptance suite. Readiness is

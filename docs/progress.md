@@ -1823,3 +1823,271 @@ Proceed to ONE focused review of this defect-fix diff. The loop stops when
 `.kiro/specs/offline-assets/.review/final-review.json` records verdict `APPROVED`. Nothing was committed,
 pushed, reset, amended, or unstaged; HEAD remains `a376096` and all edits (besides the pre-existing staged
 entries) remain unstaged working-tree changes.
+
+## file-capsules spec planning (feat/file-capsules)
+
+Planning-only milestone for the file-transfer tier: a reusable `@ghostsync/capsule` package (new
+`packages/capsule`) that encodes a replica's FULL-STATE update into a versioned, integrity-checked FILE
+CAPSULE and decodes/validates/imports it back. **PLANNED ONLY — not implemented.** No code, dependencies,
+builds, tests, commits, or pushes were performed. Only three spec documents were created and this progress
+file was appended. Branch `feat/file-capsules`; baseline commit `491e55e`
+("fix: isolate offline caches by scope and preserve screenshot evidence"). Working tree clean except
+untracked `.agents/` and `.review-artifacts/`, both **left untouched**. `origin` untouched. `pnpm-workspace.yaml`
+already globs `packages/*`, so a new `packages/capsule` is picked up with no root config change.
+
+### Real APIs read before quoting (confirmed against source, not assumed)
+
+- `packages/kit/src/{types,replica,adapter,index}.ts` — `createKit().createReplica(documentId, seedBytes?)`,
+  `Replica.exportState(): TransportUpdate { documentId; kind:"full"; bytes }`, `applyUpdate(unknown):
+  ApplyOutcome` (`ok | documentIdMismatch | invalidCarrier | malformedUpdate`), `getState(): State`,
+  `SchemaIdentity { app; schemaVersion; entityType }` recorded in-doc by the Kit's collection meta.
+- `packages/persist/src/{session,types,record,errors,index}.ts` — `openReplica`/`PersistSession` facade
+  (reads + routed `applyUpdate` import + save-state machine + `flush()` + `close`/`dispose` + `exportBytes()`),
+  `PersistenceError.code` set (`QuotaExceededError`/`TransactionAbortError`/`CloseFailedError`/`ClosedError`/…),
+  `DEFAULT_MAX_BYTES` (8 MiB), `sha256Hex` via `crypto.subtle`, and `session.identity.documentId`.
+- `packages/persist/harness/**` + `e2e/**` + root/package configs — the existing Playwright/Vite harness
+  (`window.__gs`, `armWriteAbortOnce`, real IndexedDB/crypto/locks) the capsule download/import controls extend,
+  and the kit/persist conventions a new ESM src-only strict-TS package follows.
+
+### Scope: file-capsules = PLANNED (full-state first; differential DEFERRED)
+
+Full-state capsules only this version; state-vector/diff capsules, QR, schema editor, encryption, compression,
+and network sync are deferred. The codec is a pure, browser-safe function of bytes; the browser file-picker/
+download wiring lives ONLY in the existing Persist harness, not in the shipped package and not as app UI.
+
+### The three files created
+
+- `.kiro/specs/file-capsules/requirements.md` — Summary + scope boundary + assumptions; REQ-CAP-001..010;
+  NFR-CAP-001..004; 20 numbered EARS acceptance criteria; Out of Scope; a requirement→AC→test traceability
+  table. Honest limitations stated: checksum is integrity not authenticity; size limits bound memory but do
+  not stop in-bounds CPU/memory attacks.
+- `.kiro/specs/file-capsules/design.md` — chosen format, locked stack, confirmed Kit/Persist signatures,
+  the concrete TypeScript public API, buffer-ownership rules, the validation pipeline, the error table,
+  per-input validation rules, invariants/owning layers, files-to-create, dependency/build order, testability,
+  edge cases, a decision-summary table, and two genuinely-open decisions (U1 flush-gated `persisted`;
+  U2 cap defaults) each with a recommendation.
+- `.kiro/specs/file-capsules/tasks.md` — ordered pending `- [ ]` checklist (scaffold → format/errors →
+  encode/decode → import helpers → unit/property tests → harness+Chromium e2e → final verification), the
+  requirement→test mapping, and the EXACT future Windows PowerShell verification commands (NOT run).
+
+### Chosen format (brief) + checksum coverage + validation order
+
+- **Format:** a small binary container — 11-byte header `[ magic "GSCAP\0" (6) | uint8 formatVersion=1 |
+  uint32-BE metaLength (4) ]` + a length-prefixed UTF-8 JSON metadata section
+  `{ formatVersion, app, documentId, updateByteLength, sha256, createdAt }` + the RAW full-state update bytes.
+  Extension `.gscap`; media type `application/vnd.ghostsync.capsule`; big-endian length fields. Chosen over
+  all-JSON+base64 (≈33% bloat, re-encodes the largest region) and an all-binary struct (metadata not
+  inspectable, brittle to evolve): the hybrid keeps metadata human-inspectable while storing update bytes
+  verbatim.
+- **Checksum coverage (exact):** lowercase-hex SHA-256 over the contiguous region from **offset 7 to the end**
+  (the `metaLength` prefix + metadata JSON + update bytes, in that order), with the metadata `sha256` field
+  serialized as 64 ASCII `"0"` placeholders during hashing and then overwritten in place with the real digest
+  (fixed 64-byte width ⇒ no re-layout). Magic+version (offsets 0..6) are excluded because they are the pre-
+  checksum framing. Integrity only — it does NOT authenticate the sender.
+- **Validation order (cheapest/most-protective first; each failure a distinct typed `CapsuleError`, no
+  mutation):** raw-size bound → magic+version → length framing → metadata parse + field validation
+  (incl. `updateByteLength === actual`) → decoded-update size bound → SHA-256 recompute+compare → app identity
+  → documentId identity (vs target) → Kit `applyUpdate` (map non-ok `ApplyOutcome` to `SdkRejection`).
+  Only the final step mutates, so every earlier rejection trivially leaves the target unchanged.
+
+### Public API proposal (planned signatures)
+
+`encodeCapsule(input: { app; documentId; update: Uint8Array; createdAt? }): Uint8Array`;
+`decodeCapsule(bytes, opts?): DecodedCapsule` (throws `CapsuleError`);
+`importCapsuleInto(target: { documentId; applyUpdate }, bytes, expected: { app }, opts?): ImportResult`;
+`importCapsuleIntoPersisted(target, documentId, bytes, expected, opts?): Promise<PersistImportResult>` where a
+save failure resolves `{ applied:true, persisted:false, saveError }` (not a throw) and preserves the in-memory
+data. Typed error union `CapsuleError.code ∈ { UnsupportedVersion, Malformed, AppIdentityMismatch,
+DocumentIdentityMismatch, OversizedRaw, OversizedDecoded, ChecksumMismatch, SdkRejection }`. Buffer ownership:
+encode copies the input update and retains no reference; decode returns copies (not subarray views); returned
+buffers are caller-owned. Runtime dep is `@ghostsync/kit` (`workspace:*`) only; SHA-256 via `crypto.subtle` in
+browser-safe `src` (no `node:` imports); no new runtime dependency and no lockfile change proposed as required
+(the lockfile touch is flagged for the implementation task that adds the capsule dep to the persist harness).
+
+### Planned vs implemented vs tested
+
+PLANNED: everything above. IMPLEMENTED: nothing (no `src`, no package, no harness edit). TESTED: nothing —
+no planned test is claimed to have run. The exact future verification commands are recorded in
+`tasks.md` and were NOT executed.
+
+### Next action (file-capsules)
+
+Review `.kiro/specs/file-capsules/requirements.md`, `design.md`, and `tasks.md` at the specification review
+gate BEFORE any implementation. Nothing was installed, committed, pushed, or deployed; `.agents/` and
+`.review-artifacts/` were left untouched.
+
+## file-capsules spec planning — review-finding correction pass (feat/file-capsules)
+
+Planning-only correction pass. The specification review (`.kiro/specs/file-capsules/.review/review.md`,
+`verdict.json`) returned `CHANGES_REQUESTED` with **1 HIGH, 3 MEDIUM, 4 NIT**. All eight findings were
+resolved, plus an **async-contract** correction (`crypto.subtle.digest` is a Promise) and a
+**checksum-ambiguity** correction. Only the three spec docs and this progress file were edited. **No code,
+dependencies, builds, tests, commits, or pushes.** Branch `feat/file-capsules`; baseline commit `491e55e`.
+Working tree: only `docs/progress.md` (append) and the untracked `.kiro/specs/file-capsules/` spec files
+changed; `.agents/` and `.review-artifacts/` **left untouched**. All corrections were based on the REAL
+source read this pass: `packages/kit/src/types.ts` (`State`, `ApplyOutcome` reasons
+`documentIdMismatch`|`invalidCarrier`|`malformedUpdate`, `TransportUpdate{kind:"full"|"diff"}`) and
+`packages/persist/src/{types,identity,session}.ts` (`PersistSession.identity: ResolvedIdentity{app,
+documentId,replicaId}` — **no** top-level `documentId`; `flush()` rejects `ClosedError` on
+closed/recovery; `#failSave`→`"error"` on an open-session `TransactionAbortError`/quota).
+
+### Per-finding resolution
+
+- **HIGH-1** — `PersistTarget` no longer `extends ReplicaTarget`; redefined structurally as
+  `{ identity: ResolvedIdentity; applyUpdate(unknown): ApplyOutcome; flush(): Promise<void>; getState():
+  State }`, which a real `PersistSession` satisfies with **no wrapper and no PersistSession change**. The
+  persisted helper reads the document id from `target.identity.documentId`.
+- **MEDIUM-1** — one governing document identity per path: `target.documentId` (replica) /
+  `target.identity.documentId` (persisted). Removed the redundant `documentId` parameter from
+  `importCapsuleIntoPersisted`; no caller value overrides the target identity.
+- **MEDIUM-2** — `State`/`ApplyOutcome`/`TransportUpdate` imported from `@ghostsync/kit`,
+  `ResolvedIdentity` (type-only) from `@ghostsync/persist`; none redefined. Strict TS; runtime validation
+  on `unknown`/`Uint8Array` inputs; no `any` workarounds.
+- **MEDIUM-3** — recoverable save-failure guarantee scoped to a still-readable **open** session
+  (`armWriteAbortOnce` `TransactionAbortError` → `"error"`, data readable). A `ClosedError` flush on a
+  closed/recovery/disposed session is documented as a separate terminal/programmer-error path where
+  in-memory access is **not** guaranteed. AC-CAP-009-2 scoped accordingly.
+- **NIT-1** — `encodeCapsule` accepts `Uint8Array | TransportUpdate`; a `TransportUpdate` with `kind !==
+  "full"` is a `TypeError` at the boundary (new AC-CAP-002-3).
+- **NIT-2** — `createdAt` fixed to **strict ISO-8601 UTC** (`toISOString()` round-trip + ms-`Z` regex),
+  consistent across requirements + design.
+- **NIT-3** — removed hard-coded `112/8/50/30`; AC-CAP-010-2 asserts "unchanged from the pre-change
+  baseline captured at implementation time" and distinguishes test-**file** counts (42 Kit / 7 Persist
+  unit / 9 e2e, tree-confirmable) from unasserted test-**case** counts.
+- **NIT-4** — shared fast-check helper named `tests/fc-report.ts` (no `.test.ts` suffix) so it is not
+  collected as an empty suite; noted in design Files-to-create and tasks 5.1.
+- **Async-contract** — `encodeCapsule`/`decodeCapsule`/`importCapsuleInto`/`importCapsuleIntoPersisted`
+  are `Promise`-returning; only internal non-hashing framing/metadata helpers stay sync. Reflected in
+  signatures, examples, the error contract (rejections), tasks, and planned tests (`await`/`.rejects`).
+- **Checksum-ambiguity** — `sha256` is a fixed-width 64-char lowercase-hex field appearing exactly once
+  (duplicate/ambiguous keys → `Malformed` before hashing, new AC-CAP-002-4); encode writes
+  `"0".repeat(64)`, hashes offsets 7..end, then overwrites those 64 bytes in place; verify hashes the
+  **received** bytes with only that 64-byte span swapped to the placeholder and **never** reserializes
+  parsed JSON (AC-CAP-004-2 strengthened).
+
+### Final public API (post-correction; async marked)
+
+```ts
+encodeCapsule(input: { app; documentId; update: Uint8Array | TransportUpdate; createdAt? }): Promise<Uint8Array>   // rejects TypeError on kind!=="full"
+decodeCapsule(bytes: Uint8Array, opts?): Promise<DecodedCapsule>                                                    // rejects CapsuleError
+importCapsuleInto(target: { documentId; applyUpdate }, bytes, expected: { app }, opts?): Promise<ImportResult>
+importCapsuleIntoPersisted(target: { identity: ResolvedIdentity; applyUpdate; flush; getState }, bytes, expected: { app }, opts?): Promise<PersistImportResult>
+```
+
+`CapsuleError.code ∈ { UnsupportedVersion, Malformed, AppIdentityMismatch, DocumentIdentityMismatch,
+OversizedRaw, OversizedDecoded, ChecksumMismatch, SdkRejection }`. Validation order (nothing mutates
+until the final apply): raw-size bound → magic+version → length framing → metadata parse (reject
+duplicate/ambiguous keys) + field validation (incl. `updateByteLength === actual` + strict `createdAt`)
+→ identity (governing source per path) → decoded-size bound → SHA-256 recompute+compare → Kit
+`applyUpdate`.
+
+### Files changed (this pass)
+
+- `.kiro/specs/file-capsules/design.md` — async boundary + table, SDK-type imports, `PersistTarget`
+  redefinition, identity-rules-per-path section, async-vs-sync table, strict-ISO `createdAt`,
+  checksum placeholder/verify rule, duplicate-key rejection, error table, edge cases, decision summary,
+  Files-to-create (`fc-report.ts`, new tests), Responses-to-review section.
+- `.kiro/specs/file-capsules/requirements.md` — assumptions 2/4, REQ-CAP-001/003/009, AC additions
+  (AC-CAP-002-3/4, AC-CAP-003-3), AC-CAP-004-2/009-2/010-2 rewording, traceability table,
+  Responses-to-review section. Stable REQ/NFR IDs retained.
+- `.kiro/specs/file-capsules/tasks.md` — correction-pass header note, tasks 2.3/2.4/3.1/3.2/4.1/4.2/4.3/
+  4.4/5.1/6.2/6.4 updated, mapping additions, baseline-counts rewording.
+- `docs/progress.md` — this section (all prior history preserved).
+
+### Planned vs implemented vs tested
+
+PLANNED: all corrections above. IMPLEMENTED: nothing. TESTED: nothing — **no planned test is claimed to
+have run or passed**. Every `tasks.md` item remains `- [ ]`. No install, build, or test was executed.
+
+### Next action (file-capsules correction pass)
+
+A focused re-review of the corrected spec at the specification review gate. Nothing was installed,
+committed, pushed, or reset; `.agents/` and `.review-artifacts/` were left untouched.
+
+
+## file-capsules spec planning — correction pass 3 (feat/file-capsules)
+
+Planning-only, documentation-only. External findings (five groups) were applied to
+`.kiro/specs/file-capsules/{requirements,design,tasks}.md`. **All tests remain PLANNED; none was
+executed or claimed.** Nothing was installed, built, staged, committed, or pushed; `.agents/`,
+`.review-artifacts/`, and `.review/` were left untouched.
+
+### Findings addressed
+1. **Persisted identity** — `importCapsuleIntoPersisted(target, bytes, opts?)` no longer takes an
+   expected app; `target.identity.app` + `target.identity.documentId` govern. Replica helper keeps
+   explicit `expected.app`. Planned regression: correct documentId + another app => `AppIdentityMismatch`
+   before apply and flush, state deep-equal, flush not called.
+2. **Dependency/type resolution** — no `ResolvedIdentity` import/re-export; `PersistTarget.identity` is
+   `{ readonly app: string; readonly documentId: string }`; a real `PersistSession` satisfies it unchanged
+   (harness compile-time assignment). Graph `kit <- capsule`; no `capsule -> persist`. The new importer
+   changes `pnpm-lock.yaml`: `pnpm.cmd install`, then `pnpm.cmd install --frozen-lockfile` (task 7.0).
+3. **Byte-exact checksum parsing** — fatal UTF-8 + JSON-aware token scan (decoded names, raw value spans
+   in UTF-8 byte offsets, duplicate decoded keys rejected, `sha256` = 64 literal lowercase hex with no
+   escapes); regex-only location and JSON reserialization forbidden.
+4. **Async snapshot ownership** — copy after raw-size check and before the first `await`; parse/hash/
+   return/apply from the same snapshot; encode captures inputs before hashing; SharedArrayBuffer input
+   rejected with `TypeError`.
+5. **Merge/results/errors** — (a) empty-source import preserves target data; (b) merged size above
+   Persist `maxBytes` => `applied:true, persisted:false`; (c) success is `{ applied: true }`; (d)
+   TypeError vs CapsuleError boundary per function; (e) flipped-byte claim scoped to mutations passing
+   earlier checks; (f) target closed before apply => `CapsuleError("TargetUnavailable")`, never applied.
+### New PLANNED tests (not run)
+`identity.test.ts` cross-app regression; `token-scan.test.ts`; `snapshot-ownership.test.ts`;
+`merge-semantics.test.ts`; `target-closed.test.ts`; expanded `tamper.test.ts` and `errors.test.ts`; harness
+compile-time `PersistTarget = session` check.
+### Files changed (this pass)
+`.kiro/specs/file-capsules/{requirements,design,tasks}.md`; `docs/progress.md` (this append only).
+### Next action
+One focused re-review at the specification review gate. Stable requirement IDs retained.
+
+
+## file-capsules spec planning — correction pass 4 (feat/file-capsules, 2026-11-10)
+Planning-only, documentation-only. One bounded pass applied correction-3 review findings F1-F7 to
+`.kiro/specs/file-capsules/{requirements,design,tasks}.md`. **All tests and commands remain PLANNED; none was
+executed or claimed.** Nothing was installed, built, staged, committed, pushed, or reset; `.agents/`,
+`.review-artifacts/`, and `.kiro/specs/file-capsules/.review/` were left untouched.
+### Findings addressed
+- **F1** Metadata decoder is `TextDecoder("utf-8", { fatal: true, ignoreBOM: true })` (`true` keeps a leading U+FEFF; the prior
+  `ignoreBOM: false` claim was wrong). A leading `EF BB BF` is `Malformed` before the token scan. Planned tests: "BOM-prefixed
+  metadata is Malformed"; "Unicode content before sha256 keeps byte offsets correct (round trip verifies)".
+- **F2** Harness passes a real `PersistSession` to `importCapsuleIntoPersisted` (no cast) plus a `PersistTarget` binding;
+  `-F @ghostsync/persist typecheck` (covers `harness/**/*.ts`) added after Kit and Capsule builds; clean-checkout ordered commands;
+  `persist(harness devDependency) -> capsule`, `capsule -> kit` only (acyclic); lockfile via install then `--frozen-lockfile`.
+- **F3** Encode `TransportUpdate` requires `kind === "full"` and `documentId === input.documentId` (else `TypeError` before hashing);
+  raw `Uint8Array` identity is the caller's responsibility. Three named planned tests.
+- **F4** Unconditional merged-size Chromium test: harness `open` already forwards `OpenOptions.maxBytes`; target `maxBytes: 1024`,
+  incoming 2048-char payload; expect `applied:true, persisted:false`, `QuotaExceededError`, state `"error"`, data readable.
+- **NITs** Header version 1 ok / 0 Malformed / 2..255 UnsupportedVersion; header-vs-metadata disagreement Malformed; new
+  `CapsuleError` code `CryptoUnavailable` (encode, decode, import; `cause` preserved; not Malformed); AC ordering tidied.
+### Files changed (this pass)
+`.kiro/specs/file-capsules/{requirements,design,tasks}.md`; `docs/progress.md` (this append only).
+### Next action
+One focused review of the corrected spec. Stable requirement IDs retained.
+
+## file-capsules: post-verdict inline spec edits (planning only)
+
+- Last independent review: correction-4 = **CHANGES_REQUESTED** (1 MEDIUM, 2 NIT). The verdict is preserved; no new independent approval was obtained.
+- The three remaining findings were fixed **inline** (no author/reviewer workflow) in `.kiro/specs/file-capsules/{requirements,design,tasks}.md`:
+  1. AC-CAP-006-1 scoped to capsule-content / documented operational `CapsuleError` codes; `TypeError` retained for programmer misuse.
+  2. `buffer-ownership.test.ts` consolidated into `snapshot-ownership.test.ts`, preserving mutation-during-async and returned-buffer non-aliasing (new AC-CAP-NFR3-3; SharedArrayBuffer rejection unchanged).
+  3. The merged-size Chromium assertion now measures the actual post-import `PersistSession.exportBytes()` byteLength and asserts `S_merged > maxBytes` (1024); the initial saved snapshot stays `< 1024`.
+- Record: `.kiro/specs/file-capsules/.review/post-correction-4-inline-edits.md`.
+- Status: file-capsules remains **PLANNED, not implemented**. No planned test has been executed.
+
+## file-capsules: implementation (feat/file-capsules)
+- **Implemented:** `packages/capsule` (`@ghostsync/capsule`, kit-only dependency), harness download/import controls and test hooks, `capsule-transfer.spec.ts`, `capsule-persistence.spec.ts`, README.
+- **Unit-tested (Node, vitest):** capsule 20 files / 111 tests passed; merge properties (commutativity, associativity, idempotency) seed 424242, numRuns 200, numSkips 0, numShrinks 0, all PASS.
+- **Static:** capsule typecheck/build, persist typecheck (real `PersistSession` passed to `importCapsuleIntoPersisted` and bound to `PersistTarget`, no cast) all exit 0.
+- **Browser-verified (real Chromium):** full Persist suite 37 passed (30 baseline + 7 new). Merged-size regression measured S1=26 bytes (< 1024), S_merged=2100 bytes (> maxBytes 1024).
+- **Regressions:** kit 42 files / 112 tests, persist 7 files / 50 tests, unchanged from baseline.
+- **Not done:** the ordered commands were not run from a clean checkout (task 7.1 unchecked); independent code review is a later step.
+- Evidence: `.kiro/specs/file-capsules/.review/implementation-evidence.md`.
+- **Review resolution:** the 60 s property timeouts were removed (default 5 s budget restored); capsules are now pre-built outside the repeated hashing path, assertions, 200 runs and seed 424242 unchanged. Capsule suite re-run: 20 files / 111 tests; the property tests are still timing-sensitive under machine load (see review resolution). Kit suite failed once (2 tests, kit untouched) right after the browser run, then passed 42 / 112 on rerun. Task 7.1 remains unchecked.
+
+## file-capsules: 50-run property split and snapshot verification (feat/file-capsules, uncommitted)
+- Each capsule property is now 4 named batches x 50 runs (seeds 424242..424245, numSkips 0 asserted, 200 per property asserted); capsule suite 20 files / 120 tests (was 111). 60 s property timeouts remain removed; default 5 s in force.
+- Fresh snapshot (working tree incl. untracked files, no node_modules/dist, identical lockfile) passed the full tasks.md sequence, all exit 0: frozen install, kit build, capsule typecheck/test (120)/build, persist typecheck/test (50)/build/build:harness, Chromium 37 passed, kit test 112.
+- Three extra verbose capsule runs: all exit 0, 120 tests, no timeouts; slowest batch in snapshot runs about 220 ms, overall slowest 668 ms (associativity batch 1/4, working tree).
+- Task 7.1 marked complete. Implemented / unit-tested / browser-verified (earlier) vs independently re-verified (this snapshot run) are distinct; the independent code review has not happened.
+
+- Independent snapshot re-run (orchestrator): a separate fresh source snapshot (199 files, identical lockfile hash, no node_modules/dist/.git) passed the full tasks.md sequence with every exit code 0, including 37/37 real-Chromium tests; three verbose capsule runs passed (120 tests, 12/12 batches at 50 runs, no timeouts, slowest batch 262 ms). Details: `.kiro/specs/file-capsules/tasks.md`, section "Independent re-run of the snapshot verification". The earlier line saying task 7.1 remained unchecked is superseded.

@@ -8,6 +8,15 @@
  * The harness uses the real browser IndexedDB, real crypto.subtle SHA-256, and
  * the real navigator.locks API — this is the acceptance surface (REQ-BP-007).
  */
+import {
+  CAPSULE_EXTENSION,
+  CAPSULE_MEDIA_TYPE,
+  DEFAULT_MAX_CAPSULE_BYTES,
+  encodeCapsule,
+  importCapsuleIntoPersisted,
+  isCapsuleError,
+  type PersistTarget,
+} from "@ghostsync/capsule";
 import { createKit } from "@ghostsync/kit";
 
 import { initOfflineReadiness } from "./sw-register.js";
@@ -225,6 +234,46 @@ export interface GhostSyncApi {
   resetLifecycleLog(): void;
   /** TEST-ONLY (fix 2): start a flush, then dispose, recording resolution order. */
   flushThenDisposeOrdered(handle: string): Promise<string[]>;
+  /**
+   * file-capsules: real Blob download of the session's full-state capsule via an
+   * anchor click (a genuine browser download). Resolves the suggested filename.
+   */
+  downloadCapsule(handle: string): Promise<CapsuleDownloadView | ErrorInfo>;
+  /**
+   * file-capsules: import a user-picked File through the real session. The
+   * File.size is checked against the configured raw limit BEFORE arrayBuffer().
+   * The result is also rendered into the visible #capsule-result region.
+   */
+  importCapsuleFile(handle: string, file: File): Promise<CapsuleImportView>;
+  /** TEST hook: capsule bytes as hex (same encode call as downloadCapsule). */
+  exportCapsuleHex(handle: string): Promise<string | ErrorInfo>;
+  /** TEST hook: import capsule bytes given as hex through the real session. */
+  importCapsuleHex(handle: string, hex: string): Promise<CapsuleImportView>;
+  /** TEST hook: configure the raw capsule size limit used by file import. */
+  setCapsuleMaxBytes(maxBytes: number): void;
+  /** TEST hook: object URLs created/revoked by downloadCapsule (real counters). */
+  capsuleUrlStats(): { created: number; revoked: number };
+}
+
+interface CapsuleDownloadView {
+  readonly ok: true;
+  readonly filename: string;
+  readonly size: number;
+}
+
+interface CapsuleErrorView {
+  readonly code: string | undefined;
+  readonly message: string;
+}
+
+/** Result of an import: what was applied and what was durably persisted. */
+interface CapsuleImportView {
+  readonly ok: boolean;
+  readonly applied: boolean;
+  readonly persisted: boolean | undefined;
+  readonly saveError: CapsuleErrorView | undefined;
+  readonly error: CapsuleErrorView | undefined;
+  readonly recovery: string;
 }
 
 function session(handle: string): PersistSession {
@@ -243,8 +292,205 @@ function fromHex(hex: string): Uint8Array {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// file-capsules: harness-only glue between the BUILT @ghostsync/capsule and the
+// real PersistSession. No sync/merge/persistence logic lives here.
+// ---------------------------------------------------------------------------
+
+let capsuleMaxBytes = DEFAULT_MAX_CAPSULE_BYTES;
+let urlCreated = 0;
+let urlRevoked = 0;
+
+function errorView(err: unknown): CapsuleErrorView {
+  if (isCapsuleError(err)) {
+    return { code: err.code, message: err.message };
+  }
+  if (isPersistenceError(err)) {
+    return { code: err.code, message: err.message };
+  }
+  if (err instanceof TypeError) {
+    return { code: "TypeError", message: err.message };
+  }
+  return { code: undefined, message: err instanceof Error ? err.message : String(err) };
+}
+
+function recoveryFor(applied: boolean, persisted: boolean | undefined, code: string | undefined): string {
+  if (applied && persisted === true) {
+    return "Import applied and saved.";
+  }
+  if (applied) {
+    return `Applied in memory but NOT saved${code === undefined ? "" : ` (${code})`}. The data is readable; fix the cause and flush again to retry.`;
+  }
+  switch (code) {
+    case "OversizedRaw":
+    case "OversizedDecoded":
+      return "Nothing was applied: the file is larger than the configured limit.";
+    case "AppIdentityMismatch":
+    case "DocumentIdentityMismatch":
+      return "Nothing was applied: this capsule belongs to a different app or document.";
+    case "TargetUnavailable":
+      return "Nothing was applied: the session is closed. Reopen the document and try again.";
+    case "CryptoUnavailable":
+      return "Nothing was applied: this browser cannot verify the checksum.";
+    default:
+      return "Nothing was applied: the file is damaged or not a supported capsule. Export it again from the source.";
+  }
+}
+
+function failedImport(err: unknown): CapsuleImportView {
+  return failedView(errorView(err));
+}
+
+function failedView(error: CapsuleErrorView): CapsuleImportView {
+  return {
+    ok: false,
+    applied: false,
+    persisted: undefined,
+    saveError: undefined,
+    error,
+    recovery: recoveryFor(false, undefined, error.code),
+  };
+}
+
+/** Render a result into the visible #capsule-result region (live, keyboard-neutral). */
+function renderCapsuleStatus(state: "working" | "done" | "error", text: string, view?: CapsuleImportView): void {
+  const el = document.getElementById("capsule-result");
+  if (el === null) {
+    return;
+  }
+  el.textContent = text;
+  el.dataset["state"] = state;
+  el.dataset["applied"] = view === undefined ? "" : String(view.applied);
+  el.dataset["persisted"] = view?.persisted === undefined ? "" : String(view.persisted);
+  el.dataset["errorCode"] = view?.error?.code ?? view?.saveError?.code ?? "";
+  el.className = state === "error" ? "failed" : state === "done" ? "ready" : "";
+}
+
+function renderImportView(view: CapsuleImportView): void {
+  const parts = [`applied: ${view.applied}`];
+  if (view.persisted !== undefined) {
+    parts.push(`persisted: ${view.persisted}`);
+  }
+  if (view.error !== undefined) {
+    parts.push(`error: ${view.error.code ?? "unknown"} — ${view.error.message}`);
+  }
+  if (view.saveError !== undefined) {
+    parts.push(`save error: ${view.saveError.code ?? "unknown"} — ${view.saveError.message}`);
+  }
+  parts.push(view.recovery);
+  const failed = !view.applied || view.persisted === false;
+  renderCapsuleStatus(failed ? "error" : "done", parts.join(" | "), view);
+}
+
+/** Import capsule bytes through the REAL session; results come from the real call. */
+async function importBytes(handle: string, bytes: Uint8Array): Promise<CapsuleImportView> {
+  try {
+    const target: PersistSession = session(handle);
+    // Compile-time guard (AC-CAP-003-5): a real PersistSession IS a PersistTarget,
+    // with no cast, no `any` and no wrapper. `pnpm -F @ghostsync/persist typecheck`
+    // fails here if that ever stops being true.
+    const asTarget: PersistTarget = target;
+    void asTarget;
+    const result = await importCapsuleIntoPersisted(target, bytes, { maxCapsuleBytes: capsuleMaxBytes });
+    const saveError =
+      result.saveError === undefined
+        ? undefined
+        : { code: result.saveError.code, message: result.saveError.message };
+    return {
+      ok: result.persisted,
+      applied: true,
+      persisted: result.persisted,
+      saveError,
+      error: undefined,
+      recovery: recoveryFor(true, result.persisted, saveError?.code),
+    };
+  } catch (err) {
+    return failedImport(err);
+  }
+}
+
+async function exportCapsuleBytes(handle: string): Promise<Uint8Array> {
+  const s = session(handle);
+  return encodeCapsule({
+    app: s.identity.app,
+    documentId: s.identity.documentId,
+    update: s.exportState(),
+  });
+}
+
 const api: GhostSyncApi = {
   ready: true,
+  async downloadCapsule(handle) {
+    try {
+      const s = session(handle);
+      const bytes = await exportCapsuleBytes(handle);
+      const safe = `${s.identity.documentId}-${s.identity.replicaId}`.replace(/[^A-Za-z0-9._-]/g, "_");
+      const filename = `${safe}${CAPSULE_EXTENSION}`;
+      // Copy into an ArrayBuffer-backed array: a valid BlobPart on every lib target.
+      const blob = new Blob([new Uint8Array(bytes)], { type: CAPSULE_MEDIA_TYPE });
+      const url = URL.createObjectURL(blob);
+      urlCreated += 1;
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.style.display = "none";
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      // Revoke once the browser has had a turn to start the download.
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        urlRevoked += 1;
+      }, 1000);
+      renderCapsuleStatus("done", `downloaded ${filename} (${bytes.length} bytes)`);
+      return { ok: true, filename, size: bytes.length };
+    } catch (err) {
+      const e = errorView(err);
+      renderCapsuleStatus("error", `download failed: ${e.code ?? "unknown"} — ${e.message}`);
+      return asError(err);
+    }
+  },
+  async importCapsuleFile(handle, file) {
+    renderCapsuleStatus("working", `importing ${file.name}…`);
+    // Cheap bound FIRST: never read a file that is already over the raw limit.
+    if (file.size > capsuleMaxBytes) {
+      const view = failedView({
+        code: "OversizedRaw",
+        message: `file is ${file.size} bytes, over the ${capsuleMaxBytes}-byte limit`,
+      });
+      renderImportView(view);
+      return view;
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await file.arrayBuffer());
+    } catch (err) {
+      const view = failedImport(err);
+      renderImportView(view);
+      return view;
+    }
+    const view = await importBytes(handle, bytes);
+    renderImportView(view);
+    return view;
+  },
+  async exportCapsuleHex(handle) {
+    try {
+      return toHex(await exportCapsuleBytes(handle));
+    } catch (err) {
+      return asError(err);
+    }
+  },
+  async importCapsuleHex(handle, hex) {
+    const view = await importBytes(handle, fromHex(hex));
+    renderImportView(view);
+    return view;
+  },
+  setCapsuleMaxBytes(maxBytes) {
+    capsuleMaxBytes = maxBytes;
+  },
+  capsuleUrlStats() {
+    return { created: urlCreated, revoked: urlRevoked };
+  },
   async open(handle, options) {
     try {
       const s = await openReplica(options);
@@ -514,6 +760,33 @@ declare global {
 }
 
 window.__gs = api;
+
+/** Wire the visible, keyboard-reachable capsule controls to the same API the tests drive. */
+function wireCapsuleControls(): void {
+  const handleField = document.getElementById("capsule-handle");
+  const download = document.getElementById("capsule-download");
+  const picker = document.getElementById("capsule-file");
+  if (!(handleField instanceof HTMLInputElement) || !(picker instanceof HTMLInputElement)) {
+    return;
+  }
+  const currentHandle = (): string => (handleField.value.length > 0 ? handleField.value : "s");
+  if (download instanceof HTMLButtonElement) {
+    download.addEventListener("click", () => {
+      void api.downloadCapsule(currentHandle());
+    });
+  }
+  picker.addEventListener("change", () => {
+    const file = picker.files?.[0];
+    if (file === undefined) {
+      return;
+    }
+    void api.importCapsuleFile(currentHandle(), file).finally(() => {
+      // Allow picking the same file again.
+      picker.value = "";
+    });
+  });
+}
+wireCapsuleControls();
 
 const status = document.getElementById("status");
 if (status !== null) {
