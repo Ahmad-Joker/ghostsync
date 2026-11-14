@@ -1,1 +1,29 @@
-{"name": "@ghostsync/patchboard", "version": "0.0.0", "private": true, "license": "MIT", "description": "PatchBoard — example application built on GhostSync Kit."}
+{
+  "name": "@ghostsync/patchboard",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "PatchBoard: offline kanban board built on GhostSync Kit.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "build": "vite build",
+    "test:dist": "vitest run --config vitest.dist.config.ts",
+    "preview": "vite preview --port 4339 --strictPort",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@ghostsync/capsule": "workspace:*",
+    "@ghostsync/kit": "workspace:*",
+    "@ghostsync/persist": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "24.19.2",
+    "fast-check": "4.10.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}
