@@ -2091,3 +2091,83 @@ One focused review of the corrected spec. Stable requirement IDs retained.
 - Task 7.1 marked complete. Implemented / unit-tested / browser-verified (earlier) vs independently re-verified (this snapshot run) are distinct; the independent code review has not happened.
 
 - Independent snapshot re-run (orchestrator): a separate fresh source snapshot (199 files, identical lockfile hash, no node_modules/dist/.git) passed the full tasks.md sequence with every exit code 0, including 37/37 real-Chromium tests; three verbose capsule runs passed (120 tests, 12/12 batches at 50 runs, no timeouts, slowest batch 262 ms). Details: `.kiro/specs/file-capsules/tasks.md`, section "Independent re-run of the snapshot verification". The earlier line saying task 7.1 remained unchecked is superseded.
+
+## fieldledger MVP spec planning (feat/fieldledger)
+
+Planning-only milestone. **FieldLedger MVP = PLANNED ONLY.** No application code, manifest, lockfile, install, build, test, staging, commit or push happened in this step. No planned test has run. Baseline commit `916165f` ("feat(capsule): add offline file sync and verified persistence"), branch `feat/fieldledger`. `apps/fieldledger` still contains only its scaffold `package.json`. `.agents/` and `.review-artifacts/` were left untouched.
+
+### Sources read before writing
+
+`.kiro/steering/*`, this file, `apps/fieldledger/package.json`, `packages/kit/src/*`, `packages/persist/src/*`, `packages/capsule/src/*` and its README, and the existing offline harness and service-worker build (`packages/persist/harness/{harness.ts,index.html,sw-register.ts}`, `scripts/sw-precache-plugin.ts`, `vite.config.ts`, `playwright.config.ts`, `e2e/{helpers.ts,offline-assets.spec.ts,capsule-transfer.spec.ts,capsule-persistence.spec.ts,static-multiscope-server.mjs}`). Quoted signatures come from that source.
+
+### Files created
+
+- `.kiro/specs/fieldledger/requirements.md` (REQ-FL-001..019 with EARS acceptance criteria, journey, limitations L-1..L-10, open decisions D-1..D-12)
+- `.kiro/specs/fieldledger/design.md` (identity model, adapters, merge behavior, startup and session flow, autosave labels, offline flow from the real service-worker build, file import/export, error tables, UI, file plan, dependencies, Playwright scenarios E2E-FL-01..11, unit test plan)
+- `.kiro/specs/fieldledger/tasks.md` (29 pending tasks, future PowerShell verification order, requirement-to-test traceability)
+- `docs/progress.md` (this entry appended; prior history preserved)
+
+### The single user journey
+
+Two inspectors in independent browser profiles each load FieldLedger online until it reports "Ready to work offline", type the same incident ID (normalized by trim and lowercase to the Persist `documentId`, app `fieldledger`), and open it with distinct per-profile replica IDs. They edit the incident details and checklist items (each item its own mergeable record with an offline-generated `ci-<uuid>` ID and a `sortKey`), see "Saved locally" only when Persist reports `saved`, cut the network and reload offline from the service worker, and keep editing. They then exchange real `.gscap` files in both directions through the download and file input, see a "What changed" panel built from real before and after replica state, and converge. A capsule for another incident is rejected with a specific message and no change. A capsule that is applied but whose save fails shows an alert "applied, but NOT saved" with "Retry save" and "Download backup capsule"; after retry the data persists across reload.
+
+### Key decisions (with recommendations recorded in the spec)
+
+- Plain TypeScript UI, no framework, no new dependency (all dev pins reuse repo versions).
+- Replica ID: `crypto.randomUUID()` per (profile, document) in `localStorage`, distinct from the Yjs clientID; a second tab of the same profile gets `StorageInUseError` and an in-use screen.
+- Merge: different items and different fields both survive; same field keeps exactly one submitted value (no wall-clock promise); delete versus concurrent edit leaves the concurrently written field and an incomplete item shown with explicit Restore and Discard; writes are changed-fields only.
+- Service worker: copy `sw-precache-plugin.ts` into `apps/fieldledger/scripts/` with its own cache prefix (persist untouched); extract a shared helper later.
+- Failure injection: test-owned `addInitScript` wrapper over `IDBDatabase.prototype.transaction`; nothing shipped.
+- Persisted-state evidence: raw IndexedDB `getAll` on the Persist record plus Kit decode in Node, not a mock.
+
+### Open items for review
+
+- Whether the service worker's exact navigation match ignores the URL fragment is unverified; a `localStorage` last-document fallback is specified and E2E-FL-02 settles it.
+- The Kit raises an untyped `Error` for schema mismatch; the app matches its message prefix, pinned by a unit test.
+- Real browser quota exhaustion cannot be reproduced in acceptance tests; the `maxBytes` path is covered by Persist's own tests and the mapping by unit tests.
+
+### Next action
+
+Review `.kiro/specs/fieldledger/requirements.md`, `design.md` and `tasks.md` before any implementation. Nothing was committed, pushed or deployed in this step.
+
+### fieldledger spec correction pass 1 (planning only, uncommitted)
+Bounded correction of the FieldLedger spec after the consistency review. **All FieldLedger tests remain PLANNED; nothing was run, built, installed, staged or committed.**
+- MUST criteria AC-FL-001-7, 007-4, 009-7, 009-9, 010-8, 010-9, 013-6, 016-4 now map to named tests and exact observations (requirements section 9, tasks 7A); new scenarios E2E-FL-12 to 18; none downgraded.
+- Property tests: 4 named batches x 50 cases per property, seeds 424242 to 424245, replay reporter, default 5 s timeout (20 batch tests planned).
+- Ordering test uses a tied-sortKey fixture with hand-written literal ID sequences, not compareItems.
+- Removed 'Start a fresh copy', replica-ID rotation and decision D-3; damaged-record handling is limitation L-11.
+- Delete versus edit of an existing field is a characterization test; the observed Kit outcome is not yet recorded and no winner is promised (this supersedes the earlier line in the planning entry above).
+- Focus outline unified at 3 px; REQ cross-references repaired; E2E-FL-06 clicks Try again once and awaits state.
+- Original review record preserved unchanged; new note at `.kiro/specs/fieldledger/.review/correction-1-note.md`. F-6 and F-8 intentionally left open.
+
+### fieldledger MVP implementation (uncommitted, 2026-11-14)
+FieldLedger MVP implemented under `apps/fieldledger` (plain TypeScript, Vite, adapted service worker plugin). Results from real runs:
+- Implemented + unit-tested: `pnpm.cmd -F @ghostsync/fieldledger test` 13 files, 64 tests passed; 5 properties x 4 batches x 50 runs (seeds 424242 to 424245), numSkips 0.
+- Browser-verified (real Chromium, two independent contexts): `test:e2e` 18 passed (two-profile offline journey with real .gscap exchange, rejection without mutation, save failure + retry + backup, failed close recovery, page-hide commit, beforeunload guard, second-tab lock, keyboard, 320 px, ordering fixture, invalid record repair, update-after-settle, optional sub-path). `test:dist` 4 passed. One of five full e2e runs failed with a Playwright trace-artifact ENOENT (not reproduced in three later full runs and one targeted run).
+- Delete vs edit of an existing field observed: `invalidRecord` on both profiles with `fields {text: edited}`; states converge.
+- Finding: Chromium keeps the URL fragment in service worker navigation requests; the copied worker was adapted to drop it.
+- Shared packages untouched; regressions: kit 112, capsule 120, persist 50 unit, persist browser 37 all passed.
+- UNVERIFIED: clean-checkout run, Firefox/WebKit, real quota exhaustion, Kit remote-apply event delivery.
+
+### FieldLedger MVP: independent re-verification (orchestrator, after the workflow)
+
+- Re-run from the working tree, all exit 0: `install --frozen-lockfile`; kit, capsule, persist builds; FieldLedger typecheck; FieldLedger unit/property tests (13 files / 64 tests; 20 property batches, each `numRuns=50 numSkips=0 PASS`, no timeouts); production build; `test:dist` (4 tests); Chromium acceptance (18 passed, 33.2 s); shared regressions (kit 112, capsule 120, persist unit 50, persist Chromium 37 passed); `git diff --check`.
+- Production build checked for root hosting: `dist/index.html` references `./assets/...` only, the precache manifest entries are relative, `./sw.js` is registered with `scope: "./"`. Sub-path hosting is not required by the MVP (AC-FL-010-7 changed from SHALL to SHOULD; E2E-FL-11 stays an optional extra).
+- Observed delete-versus-edit outcome (characterization): shape (iii). The item is an `invalidRecord` on both profiles with identical preserved fields `{"text":"Check valve seat"}`; decoded states deep-equal. The stale "not yet recorded" note in `tasks.md` was corrected.
+- Screenshots (valid PNGs, taken after the two-profile assertions): `apps/fieldledger/test-results/two-profile-*/fieldledger-desktop-1280x800.png` (1280x1199, 51273 bytes) and `.../fieldledger-mobile-320.png` (320x1823, 50051 bytes).
+- OPEN, not fixed: `SessionController.guard()` stores `errorMessage` when an edit throws while the workspace is showing, but the only element that displays it is built for the error and in-use screens. A failed edit in the ready phase (for example a schema-mismatch error) is therefore silent. Non-blocking for the journey; against the "actionable errors" UI rule.
+- OPEN: task 5.1 (clean-checkout/fresh-snapshot run) is not done; one Playwright trace-artifact ENOENT was seen once earlier by the implementer and did not recur in my run.
+- Nothing staged, committed or pushed; `packages/**` untouched.
+### FieldLedger edit-error fix and task 5.1 (2026-11-15, uncommitted)
+- Fixed the silent failed edit in the ready workspace: `guard()` now sets `editError`; the workspace shows `[data-testid="edit-error-alert"]` (role alert, `data-edit-error-kind`) with Dismiss, Download backup capsule and, for schema-mismatch, Reload app. Phase, save state and import result are untouched. Details in `.kiro/specs/fieldledger/.review/edit-error-and-5-1.md`.
+- New tests: `tests/edit-error.test.ts` (5) and E2E-FL-19 "a failed edit in the ready workspace is shown, the workspace stays usable, and it is not shown as saved" (real Chromium; the failure is a 121-character title set through the DOM, rejected by the app's own validate). Targeted run: 1 passed.
+- Task 5.1 verified from a fresh snapshot outside the repo (`%TEMP%\fl-snapshot-*`): 264 files in both trees (.kiro, apps, docs, packages plus 6 root files), `pnpm-lock.yaml` SHA-256 identical (F3CA7E5F...AF6EE0), no node_modules or dist before install. All steps exit 0: `install --frozen-lockfile`; kit, capsule, persist builds; FieldLedger typecheck; FieldLedger tests 14 files / 69 tests with 20 property batches `numRuns=50 numSkips=0 PASS`; FieldLedger build; `test:dist` 4 passed; Chromium `test:e2e` 19 passed (38.1 s); kit 112; capsule 120; persist unit 50; persist `build:harness`; persist `test:browser` 37 passed. No ENOENT or flake seen. Task 5.1 is checked.
+- Nothing staged, committed or pushed; `packages/**` untouched.
+
+- Independent confirmation (orchestrator, 2026-11-15): the two OPEN items above are RESOLVED. A separate fresh snapshot (265 files = working tree excluding generated output, identical lockfile hash, no node_modules/dist/.git before install) passed the tasks.md sequence with every exit code 0: frozen install; kit, capsule, persist builds; FieldLedger typecheck, tests (14 files / 69 tests, 20 property batches `numRuns=50 numSkips=0 PASS`, no timeouts), build, `test:dist` (4); Chromium `test:e2e` 19 passed (35.7 s, includes E2E-FL-19); kit 112, capsule 120, persist 50. Working-tree runs matched (19/19 Chromium, targeted regression passed). `git status --short -- packages` is empty and the lockfile diff adds only the `apps/fieldledger` importer. Coverage note: E2E-FL-19 exercises the "unexpected" edit-error kind in Chromium; the schema-mismatch kind and its "Reload app" button are covered by unit tests only. The "unexpected" copy is generic for a validation failure such as an over-long title.
+- 2026-11-16 two review fixes (FieldLedger): a failed edit now keeps the last good model and does not re-read through the collection (unit test plus E2E-FL-20 with a real schema mismatch from an imported newer-schema capsule); capsule app, document ID and created time are carried through ImportView and shown, capped at 80 characters (AC-FL-013-7). typecheck 0; unit 15 files / 78 tests (was 14 / 69), 20 batches numRuns=50 numSkips=0 PASS; build and test:dist (4) pass; Chromium 20 passed (was 19). Details: .kiro/specs/fieldledger/.review/two-findings-note.md. Uncommitted.
+
+- Independent confirmation of the two review findings (orchestrator): in the working tree, FieldLedger typecheck exit 0; unit/property tests 15 files / 78 tests with all 20 property batches `numRuns=50 numSkips=0 PASS` and no timeouts; production build and `test:dist` (4) exit 0; targeted E2E-FL-19/20 2 passed; full Chromium `test:e2e` 20 passed (46.2 s). Failed edits no longer re-read through the collection (`guard()` sets `editError` and notifies; `refresh()` keeps the last good model if the read throws). E2E-FL-20 produces a real schema mismatch by importing a Node-built capsule with newer-version schema metadata, with no production hook. Capsule metadata (app, document ID, created time) is shown as text, capped at 80 characters, for applied-saved and applied-unsaved, and survives Retry save. Not re-run from a fresh snapshot this time; `packages/` untouched, nothing staged.
+- 2026-11-16 stale-workspace import notice (FieldLedger): `importFile()` now uses the boolean from `refresh()`. If the re-read fails after a capsule was applied, the last good workspace is kept, the 'What changed' diff is suppressed and a notice (`import-stale-notice`) says the workspace shows its last readable data. Save result, metadata and backup access are kept, and the notice survives Retry save. Tests: 3 new unit tests, E2E-FL-20 extended. Uncommitted. Details: .kiro/specs/fieldledger/.review/stale-workspace-note.md.
+
+- Independent confirmation of the stale-workspace-notice patch (orchestrator): FieldLedger typecheck exit 0; unit/property tests 15 files / 81 tests (was 78), all 20 property batches `numRuns=50 numSkips=0 PASS`, no timeouts; targeted E2E-FL-20 passed (4.0 s); full Chromium `test:e2e` 20 passed (39.5 s). `importFile()` now uses the boolean from `refresh()`: on a failed read the diff is not computed, `workspaceStale` is set on the import view, and `import-stale-notice` (notice text plus a Download backup capsule button) is shown with no "What changed" block. The flag survives Retry save because the unsaved-to-saved transition spreads the existing view (unit-tested). `packages/` untouched, nothing staged.
