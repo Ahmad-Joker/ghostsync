@@ -8,6 +8,10 @@ import { LOSS_WARNING, mapSaveError } from "../state/errors.js";
 import { saveLabel } from "../state/save-label.js";
 import { metaLines } from "../transfer/capsule-meta.js";
 import { downloadBytes } from "../transfer/export.js";
+import { QR_ENABLED } from "../config.js";
+import type { QrTransferController } from "../transfer/qr/qr-controller.js";
+import { QrView } from "../transfer/qr/qr-view.js";
+import { TRANSFER_MODE_LABEL } from "../transfer/qr/transfer-mode.js";
 import { CardRow, IncompleteRow } from "./card-row.js";
 import { clear, h } from "./h.js";
 
@@ -35,13 +39,18 @@ export class AppView {
   private joinPreview: HTMLElement | undefined;
   private joinError: HTMLElement | undefined;
   private guardInstalled = false;
+  private readonly modeEl = h("span", { "data-testid": "transfer-mode", "data-transfer-mode": "file" }, TRANSFER_MODE_LABEL.file);
 
-  constructor(private readonly root: HTMLElement, private readonly c: SessionController) {
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly c: SessionController,
+    private readonly qr?: QrTransferController,
+  ) {
     this.status = h(
       "section",
       { class: "status", "aria-label": "Device status" },
       this.networkEl,
-      h("span", { "data-testid": "transfer-mode" }, "Transfer: file (.gscap)"),
+      this.modeEl,
       this.offlineEl,
       this.noticeEl,
       this.bannerEl,
@@ -178,7 +187,7 @@ export class AppView {
   }
 
   private buildWorkspace(): void {
-    this.ws = new Workspace(this.c);
+    this.ws = new Workspace(this.c, QR_ENABLED ? this.qr : undefined);
     this.view.append(this.ws.root);
   }
 
@@ -191,6 +200,9 @@ export class AppView {
     const msg = document.getElementById("session-message-text");
     if (msg !== null) msg.textContent = c.errorMessage;
     this.updateBtn.disabled = this.c.importPending;
+    const mode = this.qr?.mode ?? "file";
+    this.modeEl.textContent = TRANSFER_MODE_LABEL[mode];
+    this.modeEl.setAttribute("data-transfer-mode", mode);
     this.ws?.update();
   }
 }
@@ -224,7 +236,10 @@ class Workspace {
   private readonly rows = new Map<string, CardRow>();
   private readonly incomplete = new Map<string, IncompleteRow>();
 
-  constructor(private readonly c: SessionController) {
+  private readonly qrView: QrView | undefined;
+
+  constructor(private readonly c: SessionController, qr?: QrTransferController) {
+    if (qr !== undefined) this.qrView = new QrView(qr, () => this.qrView?.root.clientWidth ?? 0);
     this.importInput = h("input", {
       id: "import-file",
       type: "file",
@@ -297,12 +312,13 @@ class Workspace {
       h(
         "section",
         { "aria-labelledby": "transfer-h" },
-        h("h2", { id: "transfer-h" }, "Transfer (file)"),
+        h("h2", { id: "transfer-h" }, "Transfer"),
         h("p", {}, "Capsule files are integrity-checked (a checksum detects corruption). They are not authenticated: a checksum does not prove who sent a file."),
         h("button", { type: "button", id: "export-btn", onclick: () => void this.download("export") }, "Export capsule (.gscap)"),
         h("p", {}, h("label", { for: "import-file" }, "Import capsule file (.gscap)"), this.importInput),
         this.importResult,
         this.mergeSummary,
+        this.qrView?.root,
       ),
     );
   }
@@ -329,6 +345,7 @@ class Workspace {
     this.renderNotice();
     this.renderRecovery();
     this.renderImport();
+    this.qrView?.update();
     this.importInput.disabled = c.importPending || c.phase !== "ready";
     if (this.changeBtn !== undefined) this.changeBtn.disabled = c.importPending;
     if (c.importView?.state !== "importing" && this.importInput.value !== "" && c.importView !== undefined) {
@@ -423,7 +440,9 @@ class Workspace {
     clear(this.mergeSummary);
     this.importResult.removeAttribute("data-import-state");
     this.importResult.removeAttribute("data-import-code");
+    this.importResult.removeAttribute("data-import-source");
     if (v === undefined) return;
+    if (v.source !== undefined) this.importResult.setAttribute("data-import-source", v.source);
     this.importResult.setAttribute("data-import-state", v.state);
     if (v.code !== undefined) this.importResult.setAttribute("data-import-code", v.code);
     this.importResult.append(h("p", {}, v.message));

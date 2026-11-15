@@ -16,7 +16,8 @@
   "dependencies": {
     "@ghostsync/capsule": "workspace:*",
     "@ghostsync/kit": "workspace:*",
-    "@ghostsync/persist": "workspace:*"
+    "@ghostsync/persist": "workspace:*",
+    "@ghostsync/qr-transfer": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",

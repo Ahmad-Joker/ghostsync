@@ -7,6 +7,7 @@ import {
 } from "@ghostsync/capsule";
 import type { CapsuleErrorCode, CapsuleMetadata } from "@ghostsync/capsule";
 import { isPersistenceError, openReplica } from "@ghostsync/persist";
+import { QR_MAX_CAPSULE_BYTES } from "@ghostsync/qr-transfer";
 import type { GuardedCollection, PersistSession, SaveState, SaveStateInfo } from "@ghostsync/persist";
 import { APP_ID, DB_NAME, LAST_BOARD_KEY, MAX_BYTES } from "../config.js";
 import { formatRoute, parseRoute, validateBoardId } from "../identity/board-id.js";
@@ -49,6 +50,17 @@ export interface ImportView {
   readonly metadata?: CapsuleMetadata;
   /** True when the post-import re-read failed: the workspace shows its LAST READABLE data and no diff is given. */
   readonly workspaceStale?: true;
+  /** Which transfer delivered the bytes. Rendered as data-import-source. */
+  readonly source?: ImportSource;
+}
+
+export type ImportSource = "file" | "qr";
+
+interface ImportRun {
+  readonly s: PersistSession;
+  readonly source: ImportSource;
+  readonly stale: () => boolean;
+  readonly reject: (code: CapsuleErrorCode | "TypeError" | "ReadFailed", meta?: { app?: string; documentId?: string }) => void;
 }
 
 export interface SaveView {
@@ -94,6 +106,12 @@ export class SessionController {
   private session: PersistSession | undefined;
   private cards: GuardedCollection<Card> | undefined;
   private unsubscribe: (() => void) | undefined;
+  /** Checksums of capsules applied by QR in the current open session (saved or not). Cleared when the session ends. */
+  private readonly appliedQr = new Set<string>();
+  /** Checksums of QR imports that are running now. */
+  private readonly inFlightQr = new Set<string>();
+  private readonly sessionEndListeners = new Set<() => void>();
+  private readonly importStartListeners = new Set<(source: ImportSource) => void>();
 
   constructor(
     private readonly storage: Storage,
@@ -399,39 +417,74 @@ export class SessionController {
     return { bytes, filename: capsuleFilename(s.identity.documentId, s.identity.replicaId, new Date(), kind) };
   }
 
+  /** File import: size check and read, then the shared import body. Refused while any import (file or QR) is pending. */
   async importFile(file: File): Promise<void> {
-    const s = this.session;
-    if (s === undefined || this.boardId === undefined) return;
-    if (this.importView?.state === "importing") return;
-    const boardId = this.boardId;
-    const gen = this.generation;
-    const stale = (): boolean => this.generation !== gen || this.session !== s;
-    this.importView = { state: "importing", message: "Importing capsule..." };
-    this.notify();
-    const reject = (
-      code: CapsuleErrorCode | "TypeError" | "ReadFailed",
-      meta?: { app?: string; documentId?: string },
-    ): void => {
-      if (stale()) return;
-      this.importView = { state: "rejected", code, message: mapCapsuleError(code, { documentId: boardId }, meta) };
-      this.notify();
-    };
+    const run = this.beginImport("file");
+    if (run === undefined) return;
     if (file.size > DEFAULT_MAX_CAPSULE_BYTES) {
-      reject("OversizedRaw");
+      run.reject("OversizedRaw");
       return;
     }
     let bytes: Uint8Array;
     try {
       bytes = new Uint8Array(await file.arrayBuffer());
     } catch {
-      reject("ReadFailed");
+      run.reject("ReadFailed");
       return;
     }
-    if (stale()) return;
+    if (run.stale()) return;
+    await this.applyImport(run, bytes);
+  }
+
+  /**
+   * Import bytes that are already in memory (the QR path). Same pipeline, view and stale-result guard as a file import.
+   * Refused while any import is pending. Returns false when nothing ran (no open session, or an import is pending).
+   * With `opts.sha256`, the checksum counts as "in flight" synchronously, before the first await, and as "applied" for
+   * the rest of the open session once the capsule applied (saved or not).
+   */
+  async importBytes(bytes: Uint8Array, source: ImportSource, opts?: { sha256?: string }): Promise<boolean> {
+    const run = this.beginImport(source);
+    if (run === undefined) return false;
+    const sha = opts?.sha256;
+    if (sha !== undefined) this.inFlightQr.add(sha);
+    try {
+      await this.applyImport(run, bytes, sha);
+    } finally {
+      if (sha !== undefined && !run.stale()) this.inFlightQr.delete(sha);
+    }
+    return true;
+  }
+
+  private beginImport(source: ImportSource): ImportRun | undefined {
+    const s = this.session;
+    if (s === undefined || this.boardId === undefined) return undefined;
+    if (this.importView?.state === "importing") return undefined;
+    const boardId = this.boardId;
+    const gen = this.generation;
+    const stale = (): boolean => this.generation !== gen || this.session !== s;
+    this.importView = { state: "importing", message: "Importing capsule...", source };
+    for (const fn of [...this.importStartListeners]) fn(source);
+    this.notify();
+    const reject = (
+      code: CapsuleErrorCode | "TypeError" | "ReadFailed",
+      meta?: { app?: string; documentId?: string },
+    ): void => {
+      if (stale()) return;
+      this.importView = { state: "rejected", code, message: mapCapsuleError(code, { documentId: boardId }, meta), source };
+      this.notify();
+    };
+    return { s, source, stale, reject };
+  }
+
+  private async applyImport(run: ImportRun, bytes: Uint8Array, qrSha?: string): Promise<void> {
+    const { s, source, stale, reject } = run;
     const before = this.model;
     try {
-      const r = await importCapsuleIntoPersisted(s, bytes);
+      const r = await (source === "qr"
+        ? importCapsuleIntoPersisted(s, bytes, { maxCapsuleBytes: QR_MAX_CAPSULE_BYTES })
+        : importCapsuleIntoPersisted(s, bytes));
       if (stale()) return;
+      if (qrSha !== undefined) this.appliedQr.add(qrSha);
       const readable = this.refresh();
       const after = this.model;
       // A failed re-read keeps the last good model, so a diff would be empty and misleading: suppress it.
@@ -444,6 +497,7 @@ export class SessionController {
           metadata: r.metadata,
           ...(diff !== undefined ? { diff } : {}),
           ...staleFlag,
+          source,
         };
       } else {
         this.importView = {
@@ -453,6 +507,7 @@ export class SessionController {
           metadata: r.metadata,
           ...(diff !== undefined ? { diff } : {}),
           ...staleFlag,
+          source,
         };
       }
       this.notify();
@@ -476,9 +531,34 @@ export class SessionController {
     }
   }
 
-  /** True while a capsule import is running. Change board and Update now refuse to run meanwhile. */
+  /** True while a capsule import (file or QR) is running. Change board, Update now, file import and QR scan refuse to run meanwhile. */
   get importPending(): boolean {
     return this.importView?.state === "importing";
+  }
+
+  /** Read-only view of the session generation: changes whenever the session is replaced or dropped. */
+  get sessionGeneration(): number {
+    return this.generation;
+  }
+
+  /** Called from dropSession(). Returns an unsubscribe. */
+  onSessionEnd(listener: () => void): () => void {
+    this.sessionEndListeners.add(listener);
+    return () => this.sessionEndListeners.delete(listener);
+  }
+
+  /** Called synchronously when an import (file or QR) starts, before its first await. Returns an unsubscribe. */
+  onImportStart(listener: (source: ImportSource) => void): () => void {
+    this.importStartListeners.add(listener);
+    return () => this.importStartListeners.delete(listener);
+  }
+
+  /**
+   * True when a QR import of this capsule checksum applied in the current open session or is in flight. Only QR imports
+   * are recorded: a capsule imported by file and later scanned is not detected here (the merge is idempotent).
+   */
+  hasAppliedQr(sha256: string): boolean {
+    return this.appliedQr.has(sha256) || this.inFlightQr.has(sha256);
   }
 
   /** Update now: settle pending edits, then run `apply` only if the flush succeeded. Refused while an import is pending. */
@@ -550,7 +630,10 @@ export class SessionController {
 
   private dropSession(): void {
     this.generation += 1;
+    this.appliedQr.clear();
+    this.inFlightQr.clear();
     if (this.importView?.state === "importing") this.importView = undefined;
+    for (const fn of [...this.sessionEndListeners]) fn();
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.session = undefined;

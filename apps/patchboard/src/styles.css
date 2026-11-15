@@ -34,6 +34,12 @@ li.invalid { background: #fff7e0; }
 .error-text { color: #b00020; min-height: 1.5em; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 input[type="file"] { max-width: 100%; }
+[data-testid="qr-transfer"] { padding: 8px 0; min-width: 0; }
+[data-testid="qr-transfer"] video { display: block; max-width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; }
+[data-testid="qr-transfer"] canvas { display: block; max-width: none; }
+[data-testid="qr-transfer"] dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 8px 0; }
+[data-testid="qr-transfer"] dd { margin: 0; overflow-wrap: anywhere; }
+[data-testid="qr-transfer"] .row { margin: 8px 0; }
 @media (min-width: 48em) {
   body { padding: 24px; }
   #board { grid-template-columns: repeat(3, minmax(0, 1fr)); }

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GhostSync QR phone-test fixtures (laptop display)</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #1b1b1f; color: #eee; font: 15px/1.4 system-ui, sans-serif; }
+  main { display: grid; grid-template-columns: auto minmax(300px, 340px); gap: 12px; align-items: start; padding: 12px; min-height: 100vh; }
+  #stage { display: grid; place-items: center; }
+  canvas { display: block; image-rendering: pixelated; background: #fff; }
+  aside { display: grid; gap: 8px; }
+  h1 { font-size: 16px; margin: 0; }
+  dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
+  dt { color: #aab; }
+  dd { margin: 0; font-variant-numeric: tabular-nums; word-break: break-all; }
+  .banner { padding: 6px 8px; border-radius: 4px; background: #5a1d1d; color: #fff; font-weight: 600; }
+  .note { color: #aab; font-size: 13px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  button { font: inherit; padding: 6px 10px; background: #2d2d36; color: #eee; border: 1px solid #667; border-radius: 4px; cursor: pointer; }
+  button:focus-visible { outline: 3px solid #ffd54a; outline-offset: 2px; }
+  kbd { background: #2d2d36; border: 1px solid #667; border-radius: 3px; padding: 0 4px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div id="stage"><canvas id="qr" aria-label="QR code fixture"></canvas></div>
+  <aside>
+    <h1>QR phone-test fixtures (laptop side)</h1>
+    <p class="note">Support material for the iPhone test. A fixture here is not a camera result. Works offline: no network is used.</p>
+    <div id="warn" class="banner" role="alert" hidden></div>
+    <dl aria-live="polite">
+      <dt>Fixture</dt><dd id="l-fixture"></dd>
+      <dt>Size class</dt><dd id="l-class"></dd>
+      <dt>Capsule bytes</dt><dd id="l-bytes"></dd>
+      <dt>Frame characters</dt><dd id="l-frame"></dd>
+      <dt>QR version</dt><dd id="l-version"></dd>
+      <dt>Modules per side</dt><dd id="l-modules"></dd>
+      <dt>Module scale</dt><dd id="l-scale"></dd>
+      <dt>Checksum (first 12)</dt><dd id="l-checksum"></dd>
+      <dt>App / board ID</dt><dd id="l-board"></dd>
+    </dl>
+    <div class="row" role="group" aria-label="Fixture controls">
+      <button type="button" id="b-prev">Previous (&larr;)</button>
+      <button type="button" id="b-next">Next (&rarr;)</button>
+      <button type="button" id="b-s">Class S (S)</button>
+      <button type="button" id="b-l">Class L (L)</button>
+      <button type="button" id="b-minus">Smaller (-)</button>
+      <button type="button" id="b-plus">Larger (+)</button>
+      <button type="button" id="b-auto">Auto size (A)</button>
+    </div>
+    <p class="note">Keys: <kbd>&larr;</kbd> <kbd>&rarr;</kbd> or <kbd>P</kbd> <kbd>N</kbd> previous or next code in the class; <kbd>S</kbd> <kbd>L</kbd> switch class; <kbd>+</kbd> <kbd>-</kbd> change scale; <kbd>A</kbd> automatic scale. Link to one fixture: <code>fixture-display.html#L03</code>.</p>
+    <p class="note">Keep the browser at 100% zoom. Scale is whole screen pixels per module with a 4-module white quiet zone. A scale below 5 makes the attempt INVALID: use a larger window and press <kbd>A</kbd>.</p>
+  </aside>
+</main>
+<script src="./generated/fixtures.js"></script>
+<script>
+(function () {
+  "use strict";
+  var data = window.GS_FIXTURES;
+  var canvas = document.getElementById("qr");
+  var warn = document.getElementById("warn");
+  var QUIET = 4, MIN_VALID = 5, MIN_SCALE = 1, MAX_SCALE = 14;
+  function $(id) { return document.getElementById(id); }
+  if (!data || !data.fixtures || !data.fixtures.length) {
+    warn.hidden = false;
+    warn.textContent = "No fixtures found. Run: node apps/patchboard/tools/phone-test/generate-fixtures.mjs";
+    return;
+  }
+  var all = data.fixtures;
+  var current = 0;
+  var manualScale = null;
+
+  function byClass(cls) { return all.filter(function (f) { return f.cls === cls; }); }
+  function indexOfId(id) { for (var i = 0; i < all.length; i += 1) if (all[i].id === id) return i; return -1; }
+
+  function bitAt(bits, i) { return (bits[i >> 3] >> (7 - (i & 7))) & 1; }
+  function decodeBits(b64) {
+    var s = atob(b64), out = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i += 1) out[i] = s.charCodeAt(i);
+    return out;
+  }
+
+  function autoScale(f) {
+    var total = f.modules + 2 * QUIET;
+    var aside = 340 + 12 * 3;
+    var w = window.innerWidth - aside, h = window.innerHeight - 24;
+    return Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.floor(Math.min(w, h) / total)));
+  }
+
+  function render() {
+    var f = all[current];
+    var scale = manualScale !== null ? manualScale : autoScale(f);
+    var total = (f.modules + 2 * QUIET) * scale;
+    var bits = decodeBits(f.bits);
+    canvas.width = total;
+    canvas.height = total;
+    canvas.style.width = total + "px";
+    canvas.style.height = total + "px";
+    var ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, total, total);
+    ctx.fillStyle = "#000";
+    for (var y = 0; y < f.modules; y += 1) {
+      for (var x = 0; x < f.modules; x += 1) {
+        if (bitAt(bits, y * f.modules + x)) ctx.fillRect((x + QUIET) * scale, (y + QUIET) * scale, scale, scale);
+      }
+    }
+    var cls = byClass(f.cls);
+    $("l-fixture").textContent = f.id + " (" + f.index + " of " + cls.length + " in class " + f.cls + ")";
+    $("l-class").textContent = f.cls === "S" ? "S (small, 600 to 700 bytes)" : "L (large, 1150 to 1232 bytes; upper boundary)";
+    $("l-bytes").textContent = String(f.capsuleBytes);
+    $("l-frame").textContent = String(f.frameChars);
+    $("l-version").textContent = String(f.version) + " (level L)";
+    $("l-modules").textContent = String(f.modules);
+    $("l-scale").textContent = String(scale);
+    $("l-checksum").textContent = f.checksum12;
+    $("l-board").textContent = f.app + " / " + f.board;
+    var problems = [];
+    if (scale < MIN_VALID) problems.push("INVALID attempt: module scale " + scale + " is below 5. Use a larger window, then press A.");
+    var dpr = window.devicePixelRatio || 1;
+    if (Math.abs(scale * dpr - Math.round(scale * dpr)) > 1e-6) problems.push("Screen scaling " + dpr + " makes modules a fractional number of device pixels. Set the browser zoom to 100% or the display scale to 100% or 200%.");
+    if (window.innerWidth - 340 - 36 < total || window.innerHeight < total + 24) problems.push("The code does not fit the window. Press A or enlarge the window.");
+    warn.hidden = problems.length === 0;
+    warn.textContent = problems.join(" ");
+    canvas.setAttribute("data-fixture-id", f.id);
+    canvas.setAttribute("data-class", f.cls);
+    canvas.setAttribute("data-bytes", String(f.capsuleBytes));
+    canvas.setAttribute("data-frame-chars", String(f.frameChars));
+    canvas.setAttribute("data-version", String(f.version));
+    canvas.setAttribute("data-modules", String(f.modules));
+    canvas.setAttribute("data-scale", String(scale));
+    canvas.setAttribute("data-checksum", f.checksum12);
+    document.title = "QR fixture " + f.id + " (" + f.capsuleBytes + " bytes)";
+    if (location.hash !== "#" + f.id) history.replaceState(null, "", "#" + f.id);
+  }
+
+  function step(delta) {
+    var f = all[current], cls = byClass(f.cls);
+    var next = (f.index - 1 + delta + cls.length) % cls.length;
+    current = indexOfId(cls[next].id);
+    render();
+  }
+  function setClass(c) { var first = byClass(c)[0]; if (first) { current = indexOfId(first.id); render(); } }
+  function scaleBy(d) {
+    var base = manualScale !== null ? manualScale : autoScale(all[current]);
+    manualScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, base + d));
+    render();
+  }
+
+  $("b-prev").onclick = function () { step(-1); };
+  $("b-next").onclick = function () { step(1); };
+  $("b-s").onclick = function () { setClass("S"); };
+  $("b-l").onclick = function () { setClass("L"); };
+  $("b-minus").onclick = function () { scaleBy(-1); };
+  $("b-plus").onclick = function () { scaleBy(1); };
+  $("b-auto").onclick = function () { manualScale = null; render(); };
+
+  document.addEventListener("keydown", function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.target && e.target.tagName === "BUTTON" && (e.key === "Enter" || e.key === " ")) return;
+    var k = e.key;
+    if (k === "ArrowRight" || k === "n" || k === "N") step(1);
+    else if (k === "ArrowLeft" || k === "p" || k === "P") step(-1);
+    else if (k === "s" || k === "S") setClass("S");
+    else if (k === "l" || k === "L") setClass("L");
+    else if (k === "+" || k === "=") scaleBy(1);
+    else if (k === "-" || k === "_") scaleBy(-1);
+    else if (k === "a" || k === "A") { manualScale = null; render(); }
+    else return;
+    e.preventDefault();
+  });
+  window.addEventListener("resize", render);
+
+  var fromHash = indexOfId(location.hash.replace(/^#/, ""));
+  current = fromHash >= 0 ? fromHash : indexOfId(byClass("S")[0].id);
+  render();
+})();
+</script>
+</body>
+</html>

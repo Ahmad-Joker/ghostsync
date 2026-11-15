@@ -1,0 +1,40 @@
+# QR transfer MVP spec: semantic review
+
+Scope: `.kiro/specs/qr-transfer/{requirements,design,tasks}.md` (untracked, read directly) and the new note in `docs/progress.md`. Baseline `fd9b9da`, branch `feat/qr-transfer`. The spec was not edited.
+
+The spec is a planning document that routes QR bytes through the same `importCapsuleIntoPersisted` path as file import, with a shared transport-only package, PatchBoard as the first app and a physical test kept separate from fixture evidence. Its arithmetic is correct. It has three gaps that should be fixed before implementation starts: a second path to a double import, a camera leak window during scanner start-up, and a fallback ladder whose physical test classes cannot run at the lower rungs.
+
+**Verdict**: NEEDS_CHANGES (CHANGES_REQUESTED in `review.json`)
+
+## Blocker and MEDIUM findings
+
+### M1. Same code can be applied twice via a second scan taken while the first import is pending (confirmed)
+Files: `design.md` section 8.3 (`onAccepted`, `importScanned`) and 8.2; `requirements.md` AC-QR-008-3/-4.
+`hasAppliedQr(sha256)` is checked only in `onAccepted`, and the sha256 is added to the set only after the import settles (8.2). The scan session is already `idle` after the first accept, so nothing stops "Scan QR code (camera)" while the controller is `importing`. A second scan of the same code then passes the `already-imported` check, because the set is still empty, and is held. After the first import finishes, `importScanned` step 1 checks only `held` and `state === "scanned"`, and step 2 checks `importPending`, which is now false. It never re-checks the applied set, so the same capsule is applied a second time. The merge is idempotent, but AC-QR-008-4 and the task text say "apply at most once". E2E-QR-05 tests rescan only after the import has finished, so no planned test covers this window.
+Fix: in `importScanned`, re-check `hasAppliedQr(held.metadata.sha256)` before step 3, or record the sha256 in the set synchronously at step 3 and remove it on rejection. Also state whether the scan button is disabled or ignored while the controller is `importing`. Add a unit and an E2E observation for it.
+
+### M2. Camera can stay live if `stop()` runs during engine load or `video.play()` (confirmed)
+Files: `design.md` sections 7.2 steps 4 to 6 and 7.4; `requirements.md` AC-QR-005-4/-5; `tasks.md` 4.1.
+The generation check in step 4 runs once, right after `getUserMedia` resolves. Steps 5 (`await loadEngine()`) and 6 (`await video.play()`) both await after the stream exists. The spec never says when the stream becomes the "current stream" that `stop()` closes (7.4), and there is no generation re-check after those awaits. A Cancel, `pagehide` or session change in that window can leave the track live, or move the state to `scanning` after a stop. On a cold offline start the engine chunk load is the longest wait. AC-QR-005-5 and U-QR-05 test only the deferred `getUserMedia` case.
+Fix: record the stream before step 5, re-check the generation after steps 5 and 6 (stop the tracks and emit nothing if it changed), and add deferred-`loadEngine` and deferred-`play()` cases to U-QR-05 and the AC-QR-005-5 observation.
+
+### M3. Fallback ladder is not executable at the lower rungs (confirmed)
+Files: `design.md` sections 14.2, 14.3; `requirements.md` AC-QR-016-1/-3; `tasks.md` 9.4.
+Rung 2a lowers the limit to 829 bytes and rung 2b to 502 bytes, then says "re-run both classes". Size class S is 600 to 700 bytes and class L is 1150 to 1232 bytes, so both are above the limit at 502 bytes and class L is above it at 829. A QR code of those sizes cannot be shown. The spec does not say what the classes are at each rung, so the stated "practical acceptance threshold and fallback" cannot be applied. The ladder also does not say whether S is re-measured when only L failed.
+Fix: define the two classes per rung, for example about 40% and 90% of the active limit, state which classes must be re-run, and map the physical template fields to it.
+
+## LOW findings
+
+- L1. `design.md` 14.1 and 9.4: the physical test requires `data-qr-scale` of 5 or more, but the scale rule (AC-QR-004-3, 9.4) is a SHOULD and AC-QR-004-3 itself only requires 4 or more. State that PHYS-QR-01 is invalid below 5 and records the scale (the template already records it).
+- L2. `requirements.md` AC-QR-008-3 / AC-QR-013-1 versus `tasks.md` rules: AC-QR-013-1 says "no pointer click" and NFR-QR-004 says one keyboard activation, while E2E-QR-05 uses two `click()` calls. `tasks.md` documents the exception, but requirements do not. Add the exception to AC-QR-013-1 or NFR-QR-004.
+- L3. `design.md` 7.1 / 7.4: nothing handles a track `ended` event (device unplugged or permission revoked during a scan). The state stays `scanning` until the 120 s timer. Add an `ended` listener that stops and reports `failed`.
+- L4. `design.md` 8.3 step 3: `held` is cleared before `importBytes` runs. If `importBytes` returns without importing (no session, or an `importing` view already set), the held capsule is lost with no message. Say what the user sees.
+- L5. `requirements.md` section 9: AC-QR-014-4 and -6 use EV-REVIEW with "a read of the diff", which is a checklist, not an exact observation. AC-QR-010-1 lists "too narrow" among the states checked, but only E2E-QR-02 and 09 are mapped, and `too-narrow` is in E2E-QR-08. Add E2E-QR-08 to the AC-QR-010-1 row. This is a gap in the mapping, not an unmapped MUST.
+- L6. Git status: `git status --short` shows `M docs/progress.md`, `?? .kiro/specs/qr-transfer/` and also `?? .agents/` and `?? .review-artifacts/`. Both extra directories carry timestamps from 2026-11-07 and 2026-11-09, before the spec files (2026-11-15), and `tasks.md` 1.1 already names them as pre-existing, so they were not created by this change. Nothing is staged and nothing is committed, and `git diff --check` exits 0 (only an LF-to-CRLF warning on `docs/progress.md`). I cannot prove from git alone that these directories were not touched, so the owner should confirm.
+- L7. `design.md` 17: `jsqr` is listed as "published 2021-04" while the registry now reports `time.modified` 2025-11-13. The claim concerns the 1.4.0 upload date, which is fine, but note that the registry modification date differs.
+
+## Verified without findings
+
+Byte-limit arithmetic was recomputed independently. Version 25-L has 1276 data codewords (10,208 bits). Alphanumeric mode uses 4 mode bits plus 11 count bits. Capacity is therefore (10,208 - 15) / 11 = 926 pairs plus one single character = 1853, which matches the cited table. The prefix leaves 1848 = 616 x 3 body characters, so 1232 bytes. A 1233-byte capsule gives 1855 characters, which does not fit. The versions for 328, 658, 988, 1231 and 1232 bytes come out as 497, 992, 1487, 1852 and 1853 characters, which is versions 12, 18, 23, 25 and 25 against the cited table. Rung 2a is 829 bytes at 1249 characters (version 20) and rung 2b is 502 bytes at 758 characters (version 15), both exact. The capsule overhead (215/216 bytes, 268 worst case) and the 3-card and 5-card rows (1319 and 1978 bytes) are consistent. The RFC 9285 vectors check (`FGW` = 65535, `U5` = 255). The `maxCapsuleBytes` option exists in `packages/capsule/src/decode.ts` and is passed through `importCapsuleIntoPersisted`. `uqr` 0.1.3 exists on the registry. The capsule checksum covers the whole file after the version byte, so P-QR-04's "never a different accepted capsule" property is sound. The spec honestly marks capacity-table, `uqr` mode and `jsqr` phone reliability as unverified.
+
+Every MUST in requirements section 9 maps to a named test with an observation. Fixture evidence (EV-FIXTURE) and physical evidence (EV-PHYS) are kept apart and EV-PHYS reads NOT RUN. The steering rules (security, testing, architecture, coding, ui, product) are satisfied: bytes go through the public Capsule API, merge and storage logic stay out of the new package, and no existing package changes. The spec has the usual id scheme of the existing specs.
