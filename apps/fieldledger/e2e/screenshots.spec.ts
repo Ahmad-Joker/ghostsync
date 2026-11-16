@@ -1,6 +1,8 @@
 /**
- * Deterministic visual-verification capture for the Kiroween UI polish. Writes PNGs and an audit JSON
- * to .agents/tasks/ui-polish/screenshots (untracked).
+ * Deterministic visual-verification capture for the interface redesign. PNGs and audit JSON are written only when
+ * GS_SCREENSHOT_DIR is set; the assertions always run: no horizontal overflow at 320px, every control has an
+ * accessible name, 44px targets on phones, a reduced-motion rule, and the last control reachable above a ~100px
+ * bottom toolbar. File names match the BEFORE set (local-fieldledger-<state>-<size>.png) so pairs are comparable.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -83,52 +85,98 @@ async function snap(page: Page, file: string, key: string, fullPage = true): Pro
   saveAudit(`audit-fieldledger.json`, audit);
   return a;
 }
+const DESKTOP = { width: 1280, height: 800 };
+const PHONE = { width: 390, height: 844 };
 const MOBILE = { width: 320, height: 568 };
-async function expectClean(a: Audit, label: string): Promise<void> {
+const NARROW = { width: 320, height: 640 };
+const INCIDENT_ID = "before-capture";
+const LONG_ITEM = "Call the supervisor and confirm the replacement part is on site before the shift change";
+async function expectClean(a: Audit, label: string, phone = false): Promise<void> {
   expect(a.overflow.scroll, `${label}: scrollWidth`).toBeLessThanOrEqual(a.overflow.client);
   expect(a.unnamed, `${label}: unnamed controls`).toEqual([]);
+  if (phone) expect(a.small, `${label}: targets under 44px`).toEqual([]);
 }
-async function fill(page: Page): Promise<void> {
-  await createDetails(page, "Burst water main, Elm Street");
-  await addItemUi(page, "Isolate the valve");
-  await addItemUi(page, "Photograph the damage");
-  await addItemUi(page, "Notify the duty engineer");
-  await page.getByRole("checkbox").first().check();
+/** The same incident as the BEFORE capture: details, three checklist items (one long), the first completed. */
+async function populate(page: Page): Promise<void> {
+  await join(page, INCIDENT_ID);
+  await createDetails(page, "Pump station 4 seal leak");
+  await page.locator("#f-location").fill("North yard, bay 4");
+  await page.locator("#f-severity").selectOption("high");
+  await page.locator("#f-notes").fill("Slow drip from the lower seal. Area taped off.");
+  await page.locator("#f-notes").press("Tab");
+  for (const t of ["Isolate the feed valve", "Photograph the seal housing and the label on the pump", LONG_ITEM]) await addItemUi(page, t);
+  await page.getByLabel("Done: Isolate the feed valve").check();
   await awaitSaved(page);
 }
+/** Keeps the app in its genuine first-visit "registering" state so the one-online-visit notice is deterministic. */
+async function holdFirstVisit(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register = (): Promise<ServiceWorkerRegistration> => new Promise(() => undefined);
+  });
+}
 
-test("SHOT-FL-07: first-time guidance (desktop and 320px)", async ({ browser }) => {
-  const d = await newProfile(browser, { viewport: { width: 1280, height: 800 } });
-  await d.page.goto("/");
-  await expect(d.page.locator("#guidance")).toBeVisible();
-  await expectClean(await snap(d.page, "07-fieldledger-guidance-desktop.png", "07-desktop"), "07 desktop");
-  await d.context.close();
+test("SHOT-FL-01: first visit (desktop, phone, 320px): the open action is above the fold and Help is closed", async ({ browser }) => {
+  for (const [vp, name, phone] of [[DESKTOP, "desktop", false], [PHONE, "phone", true], [NARROW, "320", false]] as const) {
+    const p = await newProfile(browser, { viewport: vp });
+    await holdFirstVisit(p.page);
+    await p.page.goto("/");
+    await expect(p.page.getByTestId("first-visit-notice")).toBeVisible();
+    const open = p.page.getByRole("button", { name: "Open incident", exact: true });
+    await expect(open).toBeVisible();
+    await expect(p.page.locator("#guidance")).toBeHidden();
+    await expectClean(await snap(p.page, `local-fieldledger-first-visit-${name}.png`, `01-${name}`), `01 ${name}`, phone);
+    const box = await open.boundingBox();
+    expect((box?.y ?? 9999) + (box?.height ?? 0), `${name}: Open incident bottom edge`).toBeLessThanOrEqual(vp.height);
+    await p.context.close();
+  }
   const m = await newProfile(browser, { viewport: MOBILE });
+  await holdFirstVisit(m.page);
   await m.page.goto("/");
-  await expect(m.page.locator("#guidance")).toBeVisible();
-  await expectClean(await snap(m.page, "07-fieldledger-guidance-320.png", "07-320"), "07 320");
+  const box = await m.page.getByRole("button", { name: "Open incident", exact: true }).boundingBox();
+  expect((box?.y ?? 9999) + (box?.height ?? 0), "320x568: Open incident bottom edge").toBeLessThanOrEqual(MOBILE.height);
   await m.context.close();
 });
 
-test("SHOT-FL-08: desktop workspace", async ({ browser }) => {
-  const p = await newProfile(browser, { viewport: { width: 1280, height: 800 } });
-  await loadUntilOfflineReady(p.page);
-  await join(p.page, DOC);
-  await fill(p.page);
-  await expectClean(await snap(p.page, "08-fieldledger-desktop-workspace.png", "08-desktop"), "08");
-  await p.context.close();
+test("SHOT-FL-02: populated workspace and transfer area (desktop and phone)", async ({ browser }) => {
+  for (const [vp, name, phone] of [[DESKTOP, "desktop", false], [PHONE, "phone", true]] as const) {
+    const p = await newProfile(browser, { viewport: vp });
+    await loadUntilOfflineReady(p.page);
+    await populate(p.page);
+    await expectClean(await snap(p.page, `local-fieldledger-populated-${name}.png`, `02-${name}`), `02 ${name}`, phone);
+    const transfer = p.page.locator('section[aria-labelledby="transfer-h"]');
+    await transfer.scrollIntoViewIfNeeded();
+    await transfer.screenshot({ ...out(`local-fieldledger-transfer-${name}.png`) });
+    await p.context.close();
+  }
 });
 
-test("SHOT-FL-09/10: 320px workspace and offline-ready state", async ({ browser }) => {
-  const p = await newProfile(browser, { viewport: MOBILE });
+test("SHOT-FL-03: 320px workspace and checklist with a long title: no overflow, nothing clipped, 44px targets", async ({ browser }) => {
+  const p = await newProfile(browser, { viewport: NARROW });
   const page = p.page;
   await loadUntilOfflineReady(page);
-  await join(page, DOC);
-  await fill(page);
-  await expectClean(await snap(page, "09-fieldledger-320-workspace.png", "09-320"), "09");
-  await expect(page.locator("html")).toHaveAttribute("data-offline-ready", "true");
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ ...out(`10-fieldledger-320-offline-ready-top.png`), fullPage: false });
+  await populate(page);
+  await expectClean(await snap(page, "local-fieldledger-populated-320.png", "03-320"), "03 320", true);
+  await page.getByTestId("checklist").screenshot({ ...out("local-fieldledger-checklist-320.png") });
+  // The long title is readable in full: its wrapped copy is visible, inside the row, and the row does not scroll sideways.
+  const row = page.locator(`[data-testid="checklist"] li`).last();
+  const full = row.locator(".fl-record-full");
+  await expect(full).toBeVisible();
+  await expect(full).toHaveText(LONG_ITEM);
+  const fit = await row.evaluate((li) => {
+    const r = li.getBoundingClientRect();
+    const f = li.querySelector(".fl-record-full")?.getBoundingClientRect();
+    const buttons = [...li.querySelectorAll("button")].map((b) => b.getBoundingClientRect());
+    return {
+      scroll: [li.scrollWidth, li.clientWidth],
+      fullInside: f !== undefined && f.left >= r.left && f.right <= r.right + 0.5,
+      buttonsInside: buttons.every((b) => b.left >= r.left - 0.5 && b.right <= r.right + 0.5),
+      heights: buttons.map((b) => Math.round(b.height)),
+    };
+  });
+  expect(fit.scroll[0]).toBeLessThanOrEqual(fit.scroll[1] ?? 0);
+  expect(fit.fullInside).toBe(true);
+  expect(fit.buttonsInside).toBe(true);
+  for (const hgt of fit.heights) expect(hgt).toBeGreaterThanOrEqual(44);
   const reduce = await page.evaluate(() => {
     const walk = (rules: CSSRuleList): boolean => [...rules].some((r) => r instanceof CSSMediaRule && (/prefers-reduced-motion/.test(r.conditionText) || walk(r.cssRules)));
     return [...document.styleSheets].some((s) => {
@@ -140,9 +188,27 @@ test("SHOT-FL-09/10: 320px workspace and offline-ready state", async ({ browser 
     });
   });
   audit["reduce-motion-css"] = reduce;
-  saveAudit(`audit-fieldledger.json`, audit);
+  saveAudit("audit-fieldledger.json", audit);
   expect(reduce, "prefers-reduced-motion rule present").toBe(true);
   await p.context.close();
+});
+
+test("SHOT-FL-04: offline reload keeps the incident and shows the connection cue", async ({ browser }) => {
+  for (const [vp, name, phone] of [[DESKTOP, "desktop", false], [PHONE, "phone", true]] as const) {
+    const p = await newProfile(browser, { viewport: vp });
+    const page = p.page;
+    await loadUntilOfflineReady(page);
+    await populate(page);
+    await p.context.setOffline(true);
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-session", "ready");
+    await expect(page.locator(".gs-statusbar")).toHaveAttribute("data-network", "offline");
+    await expect(page.locator("#status-note")).toContainText("Offline · Changes still save on this device");
+    await expect(page.locator('[data-testid="checklist"] li')).toHaveCount(3);
+    await expect(page.getByTestId("save-indicator")).toHaveAttribute("data-save-state", "saved");
+    await expectClean(await snap(page, `local-fieldledger-offline-reload-${name}.png`, `04-${name}`, false), `04 ${name}`, phone);
+    await p.context.close();
+  }
 });
 
 test("SHOT-FL-11: applied-but-unsaved import alert (real aborted write)", async ({ browser }, testInfo) => {
@@ -157,10 +223,10 @@ test("SHOT-FL-11: applied-but-unsaved import alert (real aborted write)", async 
   await importFile(a.page, fileB);
   await expect(importResult(a.page)).toHaveAttribute("data-import-state", "applied-unsaved");
   await expect(a.page.locator('[data-testid="save-error-alert"]')).toBeVisible();
-  await a.page.setViewportSize({ width: 1280, height: 800 });
-  await expectClean(await snap(a.page, "11-fieldledger-unsaved-alert-desktop.png", "11-desktop"), "11 desktop");
+  await a.page.setViewportSize(DESKTOP);
+  await expectClean(await snap(a.page, "unsaved-alert-fieldledger-desktop.png", "11-desktop"), "11 desktop");
   await a.page.setViewportSize(MOBILE);
-  await expectClean(await snap(a.page, "11-fieldledger-unsaved-alert-320.png", "11-320"), "11 320");
+  await expectClean(await snap(a.page, "unsaved-alert-fieldledger-320.png", "11-320"), "11 320");
   await a.context.close();
   await b.context.close();
 });
@@ -174,12 +240,14 @@ test("SHOT-FL-12: last control reachable above a ~100px bottom toolbar (320x568 
     const page = p.page;
     await loadUntilOfflineReady(page);
     await join(page, DOC);
-    await fill(page);
+    await createDetails(page, "Burst water main, Elm Street");
+    await addItemUi(page, "Isolate the valve");
+    await awaitSaved(page);
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     const a = await auditPage(page);
     audit[`12-inset-${w}x${h}`] = a;
-    saveAudit(`audit-fieldledger.json`, audit);
-    await page.screenshot({ ...out(`12-fieldledger-inset-${w}x${h}-bottom.png`), fullPage: false });
+    saveAudit("audit-fieldledger.json", audit);
+    await page.screenshot({ ...out(`inset-fieldledger-${w}x${h}-bottom.png`), fullPage: false });
     expect(a.lastBottom, `${w}x${h}: last control bottom ${a.lastBottom} vs visible ${a.innerHeight}`).toBeLessThanOrEqual(a.innerHeight);
     expect(a.overflow.scroll).toBeLessThanOrEqual(a.overflow.client);
     await p.context.close();

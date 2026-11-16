@@ -1,19 +1,17 @@
 /**
- * Deterministic visual-verification capture for the Kiroween UI polish. Writes PNGs and an audit JSON
- * to .agents/tasks/ui-polish/screenshots (untracked). Assertions: no horizontal overflow at 320px,
- * every control has an accessible name, reduce-motion CSS exists, last control reachable above a
- * ~100px emulated bottom browser toolbar.
+ * Deterministic visual-verification capture for the interface redesign. PNGs and audit JSON are written only when
+ * GS_SCREENSHOT_DIR is set; the assertions always run: no horizontal overflow at 320px, every control has an
+ * accessible name, a reduced-motion rule exists, and the last control stays reachable above a ~100px bottom toolbar.
+ * File names match the BEFORE set (local-patchboard-<state>-<size>.png) so each pair is directly comparable.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { expect, test } from "@playwright/test";
-import type { Page } from "@playwright/test";
-import { addCardUi, awaitSaved, btn, join, loadUntilOfflineReady, newProfile } from "./helpers.js";
+import type { Browser, Page } from "@playwright/test";
+import { addCardUi, awaitSaved, btn, join, loadUntilOfflineReady, newProfile, press } from "./helpers.js";
 import { addFakeCamera, capsuleFrame, qrOnlineProfile, setCameraFrame } from "./camera.js";
 import { expectScanState, peerCapsule, qrBtn, scanFrame, showPanel } from "./qr-fixtures.js";
-import { press } from "./helpers.js";
 
-// Screenshots/audit JSON are written only when GS_SCREENSHOT_DIR is set; assertions always run.
 const OUT = process.env["GS_SCREENSHOT_DIR"] ?? "";
 if (OUT) mkdirSync(OUT, { recursive: true });
 const out = (file: string): { path?: string } => (OUT ? { path: joinPath(OUT, file) } : {});
@@ -24,6 +22,11 @@ const audit: Record<string, unknown> = {};
 // These specs open several browser contexts per test and write their own PNG/JSON artifacts; Playwright
 // trace recording for them intermittently hit ENOENT copying trace files on context.close() (Windows).
 test.use({ trace: "off" });
+
+const DESKTOP = { width: 1280, height: 800 };
+const PHONE = { width: 390, height: 844 };
+const MOBILE = { width: 320, height: 568 };
+const BOARD_ID = "before-capture";
 
 interface Audit {
   overflow: { scroll: number; client: number };
@@ -85,64 +88,82 @@ async function snap(page: Page, file: string, key: string, fullPage = true): Pro
   await page.screenshot({ ...out(file), fullPage });
   const a = await auditPage(page);
   audit[key] = a;
-  saveAudit(`audit-patchboard.json`, audit);
+  saveAudit("audit-patchboard.json", audit);
   return a;
 }
-const MOBILE = { width: 320, height: 568 };
-async function expectClean(a: Audit, label: string): Promise<void> {
+async function expectClean(a: Audit, label: string, phone = false): Promise<void> {
   expect(a.overflow.scroll, `${label}: scrollWidth`).toBeLessThanOrEqual(a.overflow.client);
   expect(a.unnamed, `${label}: unnamed controls`).toEqual([]);
+  if (phone) expect(a.small, `${label}: targets under 44px`).toEqual([]);
 }
 
-test("SHOT-PB-01: first-time guidance (desktop and 320px)", async ({ browser }) => {
-  const d = await newProfile(browser, { viewport: { width: 1280, height: 800 } });
-  await d.page.goto("/");
-  await expect(d.page.locator("#guidance")).toBeVisible();
-  await expectClean(await snap(d.page, "01-patchboard-guidance-desktop.png", "01-desktop"), "01 desktop");
-  await d.context.close();
-  const m = await newProfile(browser, { viewport: MOBILE });
-  await m.page.goto("/");
-  await expect(m.page.locator("#guidance")).toBeVisible();
-  const a = await snap(m.page, "01-patchboard-guidance-320.png", "01-320");
-  await expectClean(a, "01 320");
-  await m.context.close();
-});
-
-test("SHOT-PB-02: desktop workspace with cards in every column", async ({ browser }) => {
-  const p = await newProfile(browser, { viewport: { width: 1280, height: 800 } });
-  const page = p.page;
-  await loadUntilOfflineReady(page);
-  await join(page, "sprint-board");
-  await addCardUi(page, "Draft spec v1", "Outline plus risks");
-  await addCardUi(page, "Review notes", "Check with the field team");
-  await addCardUi(page, "Ship the offline build");
-  await btn(page, "Move to Doing: Review notes").click();
-  await btn(page, "Move to Doing: Ship the offline build").click();
-  await btn(page, "Move to Done: Ship the offline build").click();
+/** Four cards in three columns, the same data as the BEFORE capture. */
+async function populate(page: Page): Promise<void> {
+  await join(page, BOARD_ID);
+  await addCardUi(page, "Check generator fuel", "Before the night shift");
+  await addCardUi(page, "Replace relay board", "Spare is in locker 4");
+  await addCardUi(page, "Log sensor readings");
+  await addCardUi(page, "Brief the night crew", "Ten minutes at 18:00");
+  await btn(page, "Move to Doing: Replace relay board").click();
+  await btn(page, "Move to Doing: Log sensor readings").click();
+  await btn(page, "Move to Done: Brief the night crew").click();
   await awaitSaved(page);
-  await expectClean(await snap(page, "02-patchboard-desktop-workspace.png", "02-desktop"), "02");
+}
+/** Keeps the app in its genuine first-visit "registering" state so the one-online-visit notice is deterministic. */
+async function holdFirstVisit(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register = (): Promise<ServiceWorkerRegistration> => new Promise(() => undefined);
+  });
+}
+async function firstVisit(browser: Browser, vp: { width: number; height: number }, file: string, key: string): Promise<Audit> {
+  const p = await newProfile(browser, { viewport: vp });
+  await holdFirstVisit(p.page);
+  await p.page.goto("/");
+  await expect(p.page.getByTestId("first-visit-notice")).toBeVisible();
+  await expect(p.page.getByRole("button", { name: "Open board", exact: true })).toBeVisible();
+  const a = await snap(p.page, file, key);
   await p.context.close();
+  return a;
+}
+
+test("SHOT-PB-01: first visit (desktop, phone, 320px): the open action is above the fold and Help is closed", async ({ browser }) => {
+  await expectClean(await firstVisit(browser, DESKTOP, "local-patchboard-first-visit-desktop.png", "01-desktop"), "01 desktop");
+  await expectClean(await firstVisit(browser, PHONE, "local-patchboard-first-visit-phone.png", "01-phone"), "01 phone", true);
+  await expectClean(await firstVisit(browser, MOBILE, "local-patchboard-first-visit-320.png", "01-320"), "01 320");
+  for (const [vp, label] of [[PHONE, "390x844"], [MOBILE, "320x568"]] as const) {
+    const p = await newProfile(browser, { viewport: vp });
+    await holdFirstVisit(p.page);
+    await p.page.goto("/");
+    const open = p.page.getByRole("button", { name: "Open board", exact: true });
+    await expect(open).toBeVisible();
+    const box = await open.boundingBox();
+    expect((box?.y ?? 9999) + (box?.height ?? 0), `${label}: Open board bottom edge`).toBeLessThanOrEqual(vp.height);
+    await expect(p.page.locator("#guidance")).toBeHidden();
+    await p.context.close();
+  }
 });
 
-test("SHOT-PB-03/04: 320px workspace and offline-ready state", async ({ browser }) => {
+test("SHOT-PB-02: populated workspace and transfer area (desktop and phone)", async ({ browser }) => {
+  for (const [vp, name, phone] of [[DESKTOP, "desktop", false], [PHONE, "phone", true]] as const) {
+    const p = await newProfile(browser, { viewport: vp });
+    await loadUntilOfflineReady(p.page);
+    await populate(p.page);
+    await expectClean(await snap(p.page, `local-patchboard-populated-${name}.png`, `02-${name}`), `02 ${name}`, phone);
+    const transfer = p.page.locator('section[aria-labelledby="transfer-h"]');
+    await transfer.scrollIntoViewIfNeeded();
+    await transfer.screenshot({ ...out(`local-patchboard-transfer-${name}.png`) });
+    await p.context.close();
+  }
+});
+
+test("SHOT-PB-03: 320px workspace has no overflow and a reduced-motion rule exists", async ({ browser }) => {
   const p = await newProfile(browser, { viewport: MOBILE });
   const page = p.page;
   await loadUntilOfflineReady(page);
-  await join(page, "sprint-board");
-  await page.getByRole("button", { name: "Start working", exact: true }).click().catch(() => undefined);
-  await addCardUi(page, "Draft spec v1", "Outline plus risks");
-  await addCardUi(page, "Review notes");
-  await btn(page, "Move to Doing: Review notes").click();
-  await awaitSaved(page);
-  await expectClean(await snap(page, "03-patchboard-320-workspace.png", "03-320"), "03");
-  await expect(page.locator("html")).toHaveAttribute("data-offline-ready", "true");
-  await expect(page.getByTestId("offline-indicator")).toBeVisible();
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ ...out(`04-patchboard-320-offline-ready-top.png`), fullPage: false });
-  await page.getByTestId("offline-indicator").scrollIntoViewIfNeeded();
-  await page.screenshot({ ...out(`04-patchboard-320-offline-ready-indicator.png`), fullPage: false });
+  await populate(page);
+  await expectClean(await snap(page, "local-patchboard-populated-320.png", "03-320"), "03 320", true);
   const reduce = await page.evaluate(() => {
-    const walk = (rules: CSSRuleList): boolean => [...rules].some((r) => (r instanceof CSSMediaRule && (/prefers-reduced-motion/.test(r.conditionText) || walk(r.cssRules))));
+    const walk = (rules: CSSRuleList): boolean => [...rules].some((r) => r instanceof CSSMediaRule && (/prefers-reduced-motion/.test(r.conditionText) || walk(r.cssRules)));
     return [...document.styleSheets].some((s) => {
       try {
         return walk(s.cssRules);
@@ -152,46 +173,72 @@ test("SHOT-PB-03/04: 320px workspace and offline-ready state", async ({ browser 
     });
   });
   audit["reduce-motion-css"] = reduce;
-  saveAudit(`audit-patchboard.json`, audit);
+  saveAudit("audit-patchboard.json", audit);
   expect(reduce, "prefers-reduced-motion rule present").toBe(true);
   await p.context.close();
 });
 
-test("SHOT-PB-05/06: QR sharing panel and scanned-capsule review (camera stub)", async ({ browser }) => {
-  const p = await qrOnlineProfile(browser, "sprint-board", { width: 1280, height: 800 });
-  const page = p.page;
-  await addCardUi(page, "Draft spec v1", "Outline plus risks");
-  await awaitSaved(page);
-  await press(page, qrBtn(page, "qr-show-btn"));
-  await expect(showPanel(page)).toHaveAttribute("data-qr-state", "ready");
-  await expectClean(await snap(page, "05-patchboard-qr-sharing-desktop.png", "05-desktop"), "05 desktop");
+test("SHOT-PB-04: offline reload keeps the board and shows the connection cue without moving the layout", async ({ browser }) => {
+  for (const [vp, name, phone] of [[DESKTOP, "desktop", false], [PHONE, "phone", true]] as const) {
+    const p = await newProfile(browser, { viewport: vp });
+    const page = p.page;
+    await loadUntilOfflineReady(page);
+    await populate(page);
+    const bar = page.locator(".gs-statusbar");
+    await expect(bar).toHaveAttribute("data-network", "online");
+    const before = await bar.boundingBox();
+    await p.context.setOffline(true);
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-session", "ready");
+    await expect(page.locator("li[data-card-id]")).toHaveCount(4);
+    await expect(bar).toHaveAttribute("data-network", "offline");
+    await expect(page.getByTestId("network-chip")).toHaveText("Network: offline");
+    await expect(page.locator("#status-note")).toContainText("Offline · Changes still save on this device");
+    const after = await bar.boundingBox();
+    expect(Math.abs((after?.height ?? 0) - (before?.height ?? 0)), `${name}: status bar height change online -> offline`).toBeLessThan(1);
+    await expect(page.getByTestId("save-indicator")).toHaveAttribute("data-save-state", "saved");
+    await expectClean(await snap(page, `local-patchboard-offline-reload-${name}.png`, `04-${name}`, false), `04 ${name}`, phone);
+    await p.context.close();
+  }
+});
+
+test("SHOT-PB-05: QR display (desktop), too-narrow file fallback (320px)", async ({ browser }) => {
+  const p = await qrOnlineProfile(browser, "sprint-board", DESKTOP);
+  await addCardUi(p.page, "Draft spec v1", "Outline plus risks");
+  await awaitSaved(p.page);
+  await press(p.page, qrBtn(p.page, "qr-show-btn"));
+  await expect(showPanel(p.page)).toHaveAttribute("data-qr-state", "ready");
+  await expectClean(await snap(p.page, "local-patchboard-qr-display-desktop.png", "05-desktop"), "05 desktop");
+  await p.page.getByTestId("qr-transfer").screenshot({ ...out("local-patchboard-qr-display-desktop-panel.png") });
   await p.context.close();
-  // At 320px the code is intentionally not drawn (too small to scan); the panel explains this.
   const m = await qrOnlineProfile(browser, "sprint-board", MOBILE);
   await addCardUi(m.page, "Draft spec v1", "Outline plus risks");
   await awaitSaved(m.page);
   await press(m.page, qrBtn(m.page, "qr-show-btn"));
   await expect(showPanel(m.page)).toHaveAttribute("data-qr-state", "too-narrow");
-  await expectClean(await snap(m.page, "05-patchboard-qr-too-narrow-320.png", "05-320-too-narrow"), "05 320");
+  await expectClean(await snap(m.page, "local-patchboard-qr-too-narrow-320.png", "05-320"), "05 320", true);
   await m.context.close();
-  const m2 = await qrOnlineProfile(browser, "sprint-board", { width: 768, height: 1024 });
-  await addCardUi(m2.page, "Draft spec v1", "Outline plus risks");
-  await awaitSaved(m2.page);
-  await press(m2.page, qrBtn(m2.page, "qr-show-btn"));
-  await expect(showPanel(m2.page)).toHaveAttribute("data-qr-state", "ready");
-  await snap(m2.page, "05-patchboard-qr-sharing-768.png", "05-768");
-  await m2.context.close();
+});
 
-  const s = await qrOnlineProfile(browser, "sprint-board", { width: 1280, height: 800 });
+test("SHOT-PB-06: QR scan review, then import shows the result next to the board (desktop and 320px)", async ({ browser }) => {
+  const s = await qrOnlineProfile(browser, "sprint-board", DESKTOP);
   await scanFrame(s.page, capsuleFrame(await peerCapsule()));
   await expect(qrBtn(s.page, "qr-import-btn")).toBeVisible();
-  await expectClean(await snap(s.page, "06-patchboard-scanned-review-desktop.png", "06-desktop"), "06 desktop");
+  await expect(s.page.getByTestId("qr-scan-panel").locator(".gs-trust")).toBeVisible();
+  await expectClean(await snap(s.page, "local-patchboard-qr-review-desktop.png", "06-desktop"), "06 desktop");
+  await s.page.getByTestId("qr-scan-panel").screenshot({ ...out("local-patchboard-qr-review-desktop-panel.png") });
+  await press(s.page, qrBtn(s.page, "qr-import-btn"));
+  await expect(s.page.getByTestId("import-result")).toHaveAttribute("data-import-state", "applied-saved");
+  await expect(s.page.getByTestId("merge-summary")).toContainText("Imported:");
+  await expect(s.page.getByTestId("merge-summary")).toContainText("Saved on this device.");
+  await s.page.evaluate(() => window.scrollTo(0, 0));
+  await expectClean(await snap(s.page, "local-patchboard-qr-imported-desktop.png", "06-imported-desktop", false), "06 imported");
   await s.context.close();
   const sm = await qrOnlineProfile(browser, "sprint-board", MOBILE);
   await scanFrame(sm.page, capsuleFrame(await peerCapsule()));
   await expect(qrBtn(sm.page, "qr-import-btn")).toBeVisible();
-  await expectClean(await snap(sm.page, "06-patchboard-scanned-review-320.png", "06-320"), "06 320");
-  await sm.page.getByTestId("qr-scan-panel").screenshot({ ...out(`06-patchboard-scanned-review-320-panel.png`) });
+  await expectClean(await snap(sm.page, "local-patchboard-qr-review-320.png", "06-320"), "06 320", true);
+  await sm.page.getByTestId("qr-scan-panel").screenshot({ ...out("local-patchboard-qr-review-320-panel.png") });
   await sm.context.close();
 });
 
@@ -210,8 +257,8 @@ test("SHOT-PB-12: last control reachable above a ~100px bottom toolbar (320x568 
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     const a = await auditPage(page);
     audit[`12-inset-${w}x${h}`] = a;
-    saveAudit(`audit-patchboard.json`, audit);
-    await page.screenshot({ ...out(`12-patchboard-inset-${w}x${h}-bottom.png`), fullPage: false });
+    saveAudit("audit-patchboard.json", audit);
+    await page.screenshot({ ...out(`inset-patchboard-${w}x${h}-bottom.png`), fullPage: false });
     expect(a.lastBottom, `${w}x${h}: last control bottom ${a.lastBottom} vs visible ${a.innerHeight}`).toBeLessThanOrEqual(a.innerHeight);
     expect(a.overflow.scroll).toBeLessThanOrEqual(a.overflow.client);
     await p.context.close();
@@ -234,24 +281,18 @@ async function failedEdit(page: Page): Promise<void> {
   await expect(page.locator(`li[data-card-id] [data-testid="card-title"]`).first()).toHaveText("Pump leak");
 }
 test("SHOT-PB-13: failed-edit alert keeps the last good board visible (desktop and 320px)", async ({ browser }) => {
-  const d = await newProfile(browser, { viewport: { width: 1280, height: 800 } });
-  await loadUntilOfflineReady(d.page);
-  await join(d.page, "sprint-board");
-  await failedEdit(d.page);
-  await expectClean(await snap(d.page, "13-patchboard-failed-edit-desktop.png", "13-desktop"), "13 desktop");
-  await d.context.close();
-  const m = await newProfile(browser, { viewport: MOBILE });
-  await loadUntilOfflineReady(m.page);
-  await join(m.page, "sprint-board");
-  await failedEdit(m.page);
-  await expectClean(await snap(m.page, "13-patchboard-failed-edit-320.png", "13-320"), "13 320");
-  await m.context.close();
+  for (const [vp, name] of [[DESKTOP, "desktop"], [MOBILE, "320"]] as const) {
+    const d = await newProfile(browser, { viewport: vp });
+    await loadUntilOfflineReady(d.page);
+    await join(d.page, "sprint-board");
+    await failedEdit(d.page);
+    await expectClean(await snap(d.page, `failed-edit-patchboard-${name}.png`, `13-${name}`), `13 ${name}`);
+    await d.context.close();
+  }
 });
-test("SHOT-PB-14: QR scan in progress with the framing overlay (desktop and 320px)", async ({ browser }) => {
-  for (const [vp, file, key] of [
-    [{ width: 1280, height: 800 }, "14-patchboard-scan-in-progress-desktop.png", "14-desktop"],
-    [MOBILE, "14-patchboard-scan-in-progress-320.png", "14-320"],
-  ] as const) {
+
+test("SHOT-PB-14: QR scan in progress with the framing guide (desktop and 320px)", async ({ browser }) => {
+  for (const [vp, name] of [[DESKTOP, "desktop"], [MOBILE, "320"]] as const) {
     const p = await qrOnlineProfile(browser, "sprint-board", vp);
     await setCameraFrame(p.page, undefined);
     await press(p.page, qrBtn(p.page, "qr-scan-btn"));
@@ -259,7 +300,7 @@ test("SHOT-PB-14: QR scan in progress with the framing overlay (desktop and 320p
     await expect(p.page.getByTestId("qr-video")).toBeVisible();
     await expect(qrBtn(p.page, "qr-scan-cancel")).toBeVisible();
     await p.page.getByTestId("qr-scan-panel").scrollIntoViewIfNeeded();
-    await expectClean(await snap(p.page, file, key), key);
+    await expectClean(await snap(p.page, `scan-in-progress-patchboard-${name}.png`, `14-${name}`), `14 ${name}`);
     await p.context.close();
   }
 });

@@ -15,13 +15,13 @@ import { TRANSFER_MODE_LABEL } from "../transfer/qr/transfer-mode.js";
 import { CardRow, IncompleteRow } from "./card-row.js";
 import { Guidance } from "./guidance.js";
 import { clear, h } from "./h.js";
+import { connectionNote, countDiffLines, importHeadline } from "./status-text.js";
 
 /** Horizontal padding and borders of the QR panel plus its frame (see patchboard-ui.css). */
 const QR_CHROME_PX = 88;
-const EMPTY_COPY: Record<ColumnId, string> = {
-  todo: "Nothing here yet. Type a title under Add a card, then choose Add card.",
-  doing: "Nothing in progress. Use Move to Doing on a card when work starts.",
-  done: "Nothing finished yet. Use Move to Done on a card when it is complete.",
+/** Only To do gets an instruction: it is where the first card goes. Doing and Done stay quiet when empty. */
+const EMPTY_COPY: Partial<Record<ColumnId, string>> = {
+  todo: "No cards yet. Add one above.",
 };
 const STALE_WORKSPACE_NOTICE =
   "The board could not be re-read after this import, so it is showing its last readable data. Reload the app, or download a backup capsule first.";
@@ -34,12 +34,12 @@ export class AppView {
   private shownKey = "";
   private offlineHandle: OfflineHandle | undefined;
   private readonly status: HTMLElement;
-  private readonly offlineEl = h("p", { "data-testid": "offline-indicator", class: "gs-chip gs-chip--icon gs-chip--warn pb-offline" });
+  private readonly offlineEl = h("p", { "data-testid": "offline-indicator", class: "gs-chip gs-chip--icon gs-chip--warn" });
   private readonly networkEl = h("span", { "data-testid": "network-chip", class: "gs-chip gs-chip--icon gs-chip--ok" });
-  private readonly noticeEl = h("p", { "data-testid": "first-visit-notice", class: "gs-help-text" });
-  private readonly noteEl = h("p", { class: "gs-help-text pb-status-note", id: "status-note" });
-  private readonly guidance = new Guidance(() => document.getElementById("board-id") ?? document.getElementById("new-title") ?? undefined);
-  private readonly bannerEl = h("div", { "data-testid": "update-banner", class: "pb-banner", hidden: true });
+  private readonly noticeEl = h("p", { "data-testid": "first-visit-notice", class: "gs-note" });
+  private readonly noteEl = h("p", { class: "gs-status-note", id: "status-note" });
+  private readonly guidance = new Guidance();
+  private readonly bannerEl = h("div", { "data-testid": "update-banner", class: "gs-banner", hidden: true });
   private readonly updateBtn: HTMLButtonElement = h("button", { type: "button", onclick: () => void this.updateNow() }, "Update now");
   private readonly announcer = h("div", { "data-testid": "announcer", role: "status", "aria-live": "polite", "aria-atomic": "true", class: "sr-only" });
   private readonly saveAnnouncer = h("div", { "data-testid": "save-announcer", role: "status", "aria-live": "polite", "aria-atomic": "true", class: "sr-only" });
@@ -59,31 +59,14 @@ export class AppView {
   ) {
     this.status = h(
       "section",
-      { class: "status", "aria-label": "Device status" },
-      h("div", { class: "gs-chips" }, this.networkEl, this.modeEl),
-      this.offlineEl,
+      { class: "status gs-statusbar", "aria-label": "Device status", "data-network": "online" },
       this.noteEl,
+      h("div", { class: "gs-chips" }, this.networkEl, this.modeEl, this.offlineEl),
       this.noticeEl,
       this.bannerEl,
     );
-    const header = h(
-      "header",
-      { class: "gs-header" },
-      h(
-        "div",
-        { class: "gs-brand" },
-        h("span", { class: "gs-mark pb-mark", "aria-hidden": "true" }),
-        h(
-          "div",
-          { class: "gs-brand-text" },
-          h("p", { class: "gs-brand-name" }, "GhostSync"),
-          h("h1", { class: "gs-app-name" }, "PatchBoard"),
-          h("p", { class: "gs-tagline" }, "Collaboration beyond the signal"),
-        ),
-      ),
-      h("div", { class: "gs-header-actions" }, this.guidance.helpBtn),
-    );
-    this.root.append(header, this.status, this.guidance.root, this.announcer, this.saveAnnouncer, this.view);
+    document.getElementById("gs-header-actions")?.append(this.guidance.helpBtn);
+    this.root.append(this.status, this.guidance.root, this.announcer, this.saveAnnouncer, this.view);
     const net = (): void => {
       const online = navigator.onLine;
       this.networkEl.textContent = online ? "Network: online" : "Network: offline";
@@ -120,7 +103,7 @@ export class AppView {
     this.offlineEl.textContent = offlineCopy(s.state, s.error);
     this.offlineEl.setAttribute("data-offline-state", s.state);
     const tone = s.state === "ready" ? "ok" : s.state === "failed" || s.state === "unsupported" ? "bad" : "warn";
-    this.offlineEl.className = `gs-chip gs-chip--icon gs-chip--${tone} pb-offline`;
+    this.offlineEl.className = `gs-chip gs-chip--icon gs-chip--${tone}`;
     this.renderNote();
     this.noticeEl.textContent = FIRST_VISIT_NOTICE;
     this.noticeEl.hidden = !showFirstVisitNotice(s.state);
@@ -129,7 +112,7 @@ export class AppView {
     if (s.state === "waiting") {
       this.bannerEl.hidden = false;
       this.bannerEl.append(
-        h("span", {}, "A new version is ready. Save your work, then update. "),
+        h("span", {}, "A new version is ready. Save your work, then update."),
         this.updateBtn,
       );
     } else {
@@ -137,11 +120,10 @@ export class AppView {
     }
   }
 
+  /** Connection cue and plain status text, from the real network state and the real save state. */
   private renderNote(): void {
-    const parts: string[] = [];
-    if (!this.online) parts.push("Signal lost. Your work remains.");
-    if (this.offline.state === "ready") parts.push("You can disconnect from the network and continue working.");
-    this.noteEl.textContent = parts.join(" ");
+    this.status.setAttribute("data-network", this.online ? "online" : "offline");
+    this.noteEl.textContent = connectionNote(this.online, this.c.phase, this.c.save.state);
   }
 
   /** Settle pending edits first; only activate the new worker when the flush succeeds. */
@@ -186,7 +168,7 @@ export class AppView {
       name: "board-id",
       autocomplete: "off",
       spellcheck: "false",
-      "aria-describedby": "board-rules board-preview board-error",
+      "aria-describedby": "board-rules board-format board-preview board-error",
       oninput: () => {
         if (this.joinPreview !== undefined) this.joinPreview.textContent = previewBoardId(input.value);
       },
@@ -205,16 +187,15 @@ export class AppView {
         },
       },
       h("h2", {}, "Open a shared board"),
-      h("p", { class: "gs-help-text" }, "Type the board ID your team shares. The board opens on this device and your changes are stored here."),
       h("label", { for: "board-id" }, "Board ID"),
-      input,
-      h("p", { id: "board-rules", class: "gs-help-text" }, `Everyone who shares this board types the same ID. ${BOARD_ID_RULES}`),
+      h("div", { class: "pb-join-row" }, input, h("button", { type: "submit", class: "gs-btn--primary" }, "Open board")),
+      h("p", { id: "board-rules", class: "gs-help-text" }, "Everyone who shares this board types the same ID."),
+      h("p", { id: "board-format", class: "gs-help-text" }, BOARD_ID_RULES),
       this.joinPreview,
       this.joinError,
-      h("button", { type: "submit", class: "gs-btn--primary" }, "Open board"),
     );
     form.className = "pb-join";
-    this.view.append(h("section", { class: "gs-panel gs-panel--glow pb-join-panel", "aria-label": "Open a board" }, form));
+    this.view.append(h("section", { class: "gs-panel pb-join-panel", "aria-label": "Open a board" }, form));
   }
 
   private buildMessage(title: string, retry: boolean): void {
@@ -224,7 +205,7 @@ export class AppView {
         { "data-testid": "session-message", role: "alert", class: "gs-panel pb-message" },
         h("h2", {}, title),
         h("p", { id: "session-message-text" }, this.c.errorMessage),
-        h("p", { class: "gs-help-text" }, retry ? "Choose Try again once the problem is fixed, or open a different board." : "Open a different board, or reload the page and try again."),
+        h("p", { class: "gs-help-text" }, retry ? "What to do next: choose Try again once the problem is fixed, or open a different board." : "What to do next: open a different board, or reload the page and try again."),
         h(
           "div",
           { class: "actions" },
@@ -242,6 +223,7 @@ export class AppView {
 
   update(): void {
     const c = this.c;
+    this.renderNote();
     if (c.phase === "join") {
       if (this.joinError !== undefined) this.joinError.textContent = c.joinMessage;
       return;
@@ -268,13 +250,14 @@ class Workspace {
   private readonly editErrorHost = h("div");
   private shownEditError: SessionController["editError"];
   private readonly noticeHost = h("div");
-  private readonly importResult = h("div", { "data-testid": "import-result", role: "status", "aria-live": "polite", class: "pb-import" });
-  private readonly mergeSummary = h("div", { "data-testid": "merge-summary", class: "pb-merge" });
+  private readonly importResult = h("div", { "data-testid": "import-result", role: "status", "aria-live": "polite", class: "gs-result" });
+  private readonly mergeSummary = h("div", { "data-testid": "merge-summary", class: "gs-result" });
   private readonly importInput: HTMLInputElement;
   private readonly importHelp = h("p", { id: "import-help", class: "gs-help-text" });
   private changeBtn: HTMLButtonElement | undefined;
   private readonly recoveryHost = h("div");
-  private readonly idLine = h("p");
+  private readonly titleId = h("strong", { class: "pb-title-id" });
+  private readonly metaEl = h("p", { class: "pb-meta" });
   private readonly newTitle: HTMLInputElement;
   private readonly newNotes: HTMLTextAreaElement;
   private readonly addError = h("p", { id: "add-error", role: "alert", class: "error-text" });
@@ -289,6 +272,7 @@ class Workspace {
   private readonly invalidList = h("ul", { class: "cards" });
   private readonly rows = new Map<string, CardRow>();
   private readonly incomplete = new Map<string, IncompleteRow>();
+  private readonly transferHeading = h("h2", { id: "transfer-h", tabindex: "-1" }, "Transfer");
 
   private readonly qrView: QrView | undefined;
 
@@ -305,7 +289,7 @@ class Workspace {
       id: "import-file",
       type: "file",
       accept: ".gscap,application/vnd.ghostsync.capsule",
-      "aria-describedby": "import-help",
+      "aria-describedby": "import-help import-trust",
       "data-testid": "import-input",
       onchange: () => {
         const f = this.importInput.files?.[0];
@@ -359,7 +343,8 @@ class Workspace {
       const heading = h("h3", { tabindex: "-1" }, COLUMN_LABEL[col]);
       const list = h("ul", { class: "cards" });
       const count = h("span", { class: "pb-count" });
-      const empty = h("p", { class: "pb-empty gs-help-text" }, EMPTY_COPY[col]);
+      const copy = EMPTY_COPY[col];
+      const empty = h("p", { class: "pb-empty gs-help-text", hidden: copy === undefined }, copy ?? "");
       this.headings.set(col, heading);
       this.lists.set(col, list);
       this.counts.set(col, count);
@@ -374,22 +359,74 @@ class Workspace {
         ),
       );
     }
+    const toTransfer = (focus: HTMLElement): void => {
+      focus.scrollIntoView({ block: "start" });
+      focus.focus();
+    };
+    const transfer = h(
+      "section",
+      { "aria-labelledby": "transfer-h", class: "gs-panel gs-transfer pb-transfer" },
+      this.transferHeading,
+      h("p", {}, "Move this board's changes to another device. Both devices must open the same board ID."),
+      h(
+        "p",
+        { class: "gs-help-text" },
+        "Use a QR code when the other device is next to you and the update is small. Use a file for larger updates: a file always works, while a QR code has a hard size limit.",
+      ),
+      h(
+        "div",
+        { class: "gs-transfer-grid" },
+        h(
+          "div",
+          { class: "gs-transfer-group", role: "group", "aria-labelledby": "file-down-h" },
+          h("h3", { id: "file-down-h" }, "Download file"),
+          h("p", { class: "gs-help-text", id: "export-help" }, "Saves a .gscap file you can send by any method."),
+          h("button", { type: "button", id: "export-btn", class: "gs-btn--primary", "aria-describedby": "export-help", onclick: () => void this.download("export") }, "Export capsule (.gscap)"),
+        ),
+        h(
+          "div",
+          { class: "gs-transfer-group", role: "group", "aria-labelledby": "file-up-h" },
+          h("h3", { id: "file-up-h" }, "Import file"),
+          h("label", { for: "import-file" }, "Import capsule file (.gscap)"),
+          this.importInput,
+          this.importHelp,
+          h("p", { class: "gs-trust", id: "import-trust" }, "Files are not authenticated: only import capsules from people you trust."),
+        ),
+      ),
+      h(
+        "details",
+        { class: "gs-learn" },
+        h("summary", {}, "Learn more: checksum and backups"),
+        h("p", {}, "The checksum detects damaged data. It does not prove who created or sent the capsule."),
+        h("p", {}, "If saving ever fails, a button to download a backup capsule appears next to the save status. Use it before closing or reloading."),
+        h("p", { "data-testid": "merge-help" }, MERGE_HELP),
+      ),
+      this.importResult,
+      this.qrView?.root,
+    );
     this.changeBtn = h("button", { type: "button", "data-testid": "change-board", onclick: () => void this.c.changeBoard() }, "Change board");
     this.root = h(
       "main",
       {},
       h(
         "header",
-        { class: "row pb-board-head" },
-        this.idLine,
-        this.changeBtn,
+        { class: "pb-board-head" },
+        h("div", { class: "pb-titleblock" }, h("p", { class: "pb-title" }, h("span", { class: "pb-title-label" }, "Board "), this.titleId), this.metaEl),
+        h(
+          "div",
+          { class: "pb-head-actions" },
+          h("button", { type: "button", class: "gs-btn--quiet", onclick: () => toTransfer(this.transferHeading) }, "Share"),
+          h("button", { type: "button", class: "gs-btn--quiet", onclick: () => toTransfer(this.importInput.disabled ? this.transferHeading : this.importInput) }, "Import"),
+          this.changeBtn,
+        ),
       ),
-      h("p", { class: "status-line" }, h("span", {}, "Save status: "), this.saveEl),
+      h("p", { class: "status-line" }, h("span", { class: "pb-save-label" }, "Save status: "), this.saveEl),
       this.saveHelp,
       this.alertHost,
       this.editErrorHost,
       this.noticeHost,
       this.recoveryHost,
+      this.mergeSummary,
       h("section", { "aria-labelledby": "add-h", class: "gs-panel pb-add" }, h("h2", { id: "add-h" }, "Add a card"), addForm),
       h("section", { "aria-labelledby": "board-h", class: "pb-board-section" }, h("h2", { id: "board-h" }, "Board"), this.board),
       h(
@@ -400,57 +437,9 @@ class Workspace {
         this.invalidIntro,
         this.invalidList,
       ),
-      h(
-        "section",
-        { "aria-labelledby": "transfer-h", class: "gs-panel gs-panel--glow pb-portal" },
-        h("h2", { id: "transfer-h" }, "Transfer Portal"),
-        h(
-          "p",
-          {},
-          "Carry this board's changes to another device. A capsule is a small file containing this board's changes. Changes carried safely between devices.",
-        ),
-        h(
-          "p",
-          { class: "gs-help-text" },
-          "Which should I use? File transfer always works. Use a QR code only when the capsule is small and both devices are side by side.",
-        ),
-        h(
-          "div",
-          { class: "pb-card pb-file", role: "group", "aria-labelledby": "file-h" },
-          h("h3", { id: "file-h" }, "File transfer"),
-          h("p", { class: "gs-help-text" }, "Always works, even with a large board."),
-          h(
-            "ol",
-            { class: "pb-seq" },
-            h("li", {}, "Export a capsule on this device."),
-            h("li", {}, "Send the file to the other device any way you like."),
-            h("li", {}, "On that device, choose the file under Import."),
-          ),
-          h("button", { type: "button", id: "export-btn", class: "gs-btn--primary", onclick: () => void this.download("export") }, "Export capsule (.gscap)"),
-          h(
-            "div",
-            { class: "pb-field" },
-            h("label", { for: "import-file" }, "Import capsule file (.gscap)"),
-            this.importInput,
-            this.importHelp,
-          ),
-          h("p", { class: "gs-help-text" }, "Files are not authenticated: only import capsules from people you trust."),
-          h(
-            "details",
-            { class: "gs-learn" },
-            h("summary", {}, "Learn more: checksum and backups"),
-            h("p", {}, "The checksum detects damaged data. It does not prove who created or sent the capsule."),
-            h("p", {}, "If saving ever fails, a button to download a backup capsule appears at the top of this page. Use it before closing or reloading."),
-            h("p", { "data-testid": "merge-help" }, MERGE_HELP),
-          ),
-        ),
-        this.importResult,
-        this.mergeSummary,
-        this.qrView?.root,
-      ),
+      transfer,
     );
   }
-
   private async download(kind: "export" | "backup"): Promise<void> {
     const built = await this.c.buildCapsule(kind);
     if (built !== undefined) downloadBytes(built.bytes, built.filename);
@@ -461,19 +450,32 @@ class Workspace {
     const main = this.root;
     if (c.boardId !== undefined) main.setAttribute("data-board-id", c.boardId);
     if (c.replicaId !== undefined) main.setAttribute("data-replica-id", c.replicaId);
-    this.idLine.textContent = `Board ${c.boardId ?? ""} · This device: ${(c.replicaId ?? "").slice(0, 8)} · ${c.restored ? "Restored saved data" : "New on this device"}`;
+    this.titleId.textContent = c.boardId ?? "";
+    this.metaEl.textContent = `This device: ${(c.replicaId ?? "").slice(0, 8)} · ${c.restored ? "Restored saved data" : "New on this device"}`;
 
     const l = saveLabel(c.save.state, c.save.info);
     this.saveEl.textContent = `${l.symbol} ${l.label}`;
     this.saveEl.setAttribute("data-save-state", c.save.state);
     this.saveEl.setAttribute("data-save-sequence", String(c.save.info.sequence));
-    const tone = c.save.state === "saved" ? "ok" : c.save.state === "error" ? "bad" : c.save.state === "saving" ? "info" : "warn";
-    this.saveEl.className = `gs-chip gs-chip--${tone}`;
-    this.saveHelp.textContent =
+    // "Nothing to save yet" (saved state, nothing written) is neutral; green is reserved for a real save.
+    const tone =
       c.save.state === "saved"
-        ? "Your latest changes are stored safely on this device. Saved beyond the signal."
+        ? c.save.info.sequence > 0
+          ? "ok"
+          : "neutral"
         : c.save.state === "error"
-          ? "Saving failed. Use Retry save below, or download a backup capsule so nothing is lost."
+          ? "bad"
+          : c.save.state === "saving"
+            ? "info"
+            : "warn";
+    this.saveEl.className = `gs-save gs-save--${tone}`;
+    this.saveHelp.textContent =
+      c.save.state === "saved" && c.save.info.sequence > 0
+        ? "Your latest changes are stored on this device."
+        : c.save.state === "saved"
+          ? "Nothing to store yet. Changes are stored on this device as you work."
+        : c.save.state === "error"
+          ? "Saving failed. Use Retry save, or download a backup capsule."
           : c.save.state === "saving"
             ? "Saving your changes to this device. Keep this page open."
             : "Your changes are saved to this device automatically.";
@@ -489,7 +491,7 @@ class Workspace {
       ? c.importPending
         ? "Import is paused while another import finishes."
         : "Import is unavailable until the board has finished saving or reopening."
-      : "Choosing a file imports it straight away. A summary of what changed appears below.";
+      : "Choosing a file imports it straight away, with no preview. A summary of what changed appears above the board.";
     if (this.changeBtn !== undefined) this.changeBtn.disabled = c.importPending;
     if (c.importView?.state !== "importing" && this.importInput.value !== "" && c.importView !== undefined) {
       this.importInput.value = "";
@@ -583,6 +585,7 @@ class Workspace {
     const v = this.c.importView;
     clear(this.importResult);
     clear(this.mergeSummary);
+    this.mergeSummary.removeAttribute("data-result");
     this.importResult.removeAttribute("data-import-state");
     this.importResult.removeAttribute("data-import-code");
     this.importResult.removeAttribute("data-import-source");
@@ -591,6 +594,8 @@ class Workspace {
     this.importResult.setAttribute("data-import-state", v.state);
     if (v.code !== undefined) this.importResult.setAttribute("data-import-code", v.code);
     this.importResult.append(h("p", {}, v.message));
+    if (v.state === "rejected") this.importResult.append(h("p", { class: "gs-help-text" }, "What to do next: choose a different capsule, or ask the sender to export it again."));
+    if (v.state === "applied-unsaved") this.importResult.append(h("p", { class: "gs-help-text" }, "What to do next: use Retry save in the message at the top of the page, or download a backup capsule."));
     const lines = metaLines(v.metadata);
     if (lines.length > 0) {
       const dl = h("dl", { "data-testid": "import-meta" });
@@ -611,7 +616,14 @@ class Workspace {
       const ul = h("ul", {});
       if (v.diff.length === 0) ul.append(h("li", {}, "No changes: everything in this capsule was already here."));
       for (const line of v.diff) ul.append(h("li", {}, line));
-      this.mergeSummary.append(h("h3", {}, "What changed"), ul);
+      const saved = v.state === "applied-saved";
+      this.mergeSummary.setAttribute("data-result", saved ? "saved" : "unsaved");
+      this.mergeSummary.append(
+        h("p", { class: "gs-result-headline" }, importHeadline(countDiffLines(v.diff))),
+        h("p", { class: "gs-result-state" }, saved ? "Saved on this device." : "Not saved to this device yet. Use Retry save."),
+        h("h3", {}, "What changed"),
+        ul,
+      );
     }
   }
 
@@ -661,7 +673,7 @@ class Workspace {
       const count = this.counts.get(col);
       if (count !== undefined) count.textContent = n === 1 ? "1 card" : `${n} cards`;
       const empty = this.empties.get(col);
-      if (empty !== undefined) empty.hidden = n > 0;
+      if (empty !== undefined) empty.hidden = n > 0 || EMPTY_COPY[col] === undefined;
     }
     let prevInvalid: Element | null = null;
     for (const inv of m.invalid) {

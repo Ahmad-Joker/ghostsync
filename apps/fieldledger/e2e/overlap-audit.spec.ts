@@ -1,5 +1,5 @@
 /**
- * Decorative-effect overlap audit (Kiroween UI polish) and checklist-row layout check for FieldLedger.
+ * Overlap audit (interface redesign) and checklist-row layout check for FieldLedger.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -43,6 +43,7 @@ for (const [name, vp] of [
   test(`E2E-FL-OVL-${name}: decorative effects never cover content (guidance, workspace, unsaved alert)`, async ({ browser }) => {
     const g = await newProfile(browser, { viewport: vp });
     await g.page.goto("/");
+    await g.page.getByRole("button", { name: "Help", exact: true }).click();
     await expect(g.page.locator("#guidance")).toBeVisible();
     await check(g.page, `guidance-${name}`);
     await g.context.close();
@@ -103,24 +104,27 @@ for (const [name, vp] of [
     expect(info.overflow[0]).toBeLessThanOrEqual(info.overflow[1] ?? 0);
     expect(info.rows.length).toBe(4);
     for (const row of info.rows) {
-      expect([row.order[0], row.order[1], row.order[3], row.order[4], row.order[5]]).toEqual(["input:Done", "input:Item text", "button:Move up", "button:Move down", "button:Delete item"]);
+      expect([row.order[0], row.order[1], row.order[4], row.order[5], row.order[6]]).toEqual(["input:Done", "input:Item text", "button:Move up", "button:Move down", "button:Delete item"]);
       expect(row.order[2]).toMatch(/^span:/);
+      expect(row.order[3]).toMatch(/^span:/);
       expect(row.scroll[0]).toBeLessThanOrEqual(row.scroll[1] ?? 0);
-      const [, text, , up, down, del] = row.parts;
+      const [, text, state, full, up, down, del] = row.parts;
       for (const b of [up, down, del]) {
         expect(b?.h ?? 0).toBeGreaterThanOrEqual(43.5);
         expect(b?.r ?? 0).toBeLessThanOrEqual(row.li.r + 0.5);
       }
       expect(text?.h ?? 0).toBeGreaterThanOrEqual(43.5);
       if (name !== "desktop") {
-        // Stacked layout: title above the chip, the three buttons share one line with equal widths and equal gaps.
+        // Stacked layout: state above the full-width title, the full title below it when long, then the three buttons on one line with equal widths and equal gaps.
         expect(Math.abs((up?.y ?? 0) - (down?.y ?? 1))).toBeLessThan(1);
         expect(Math.abs((down?.y ?? 0) - (del?.y ?? 1))).toBeLessThan(1);
         expect(Math.abs((up?.w ?? 0) - (down?.w ?? 1))).toBeLessThan(1);
         expect(Math.abs((down?.w ?? 0) - (del?.w ?? 1))).toBeLessThan(1);
         expect(Math.abs(((down?.x ?? 0) - (up?.r ?? 0)) - ((del?.x ?? 0) - (down?.r ?? 0)))).toBeLessThan(1);
-        expect((row.parts[2]?.y ?? 0)).toBeGreaterThan((text?.y ?? 0) + (text?.h ?? 0) - 1);
-        expect(up?.y ?? 0).toBeGreaterThan((row.parts[2]?.y ?? 0) + (row.parts[2]?.h ?? 0) - 1);
+        expect((text?.y ?? 0)).toBeGreaterThan((state?.y ?? 0) + (state?.h ?? 0) - 1);
+        expect(text?.w ?? 0).toBeGreaterThan(row.li.w - 60);
+        expect(up?.y ?? 0).toBeGreaterThan((text?.y ?? 0) + (text?.h ?? 0) - 1);
+        if ((full?.h ?? 0) > 0) expect(up?.y ?? 0).toBeGreaterThan((full?.y ?? 0) + (full?.h ?? 0) - 1);
       } else {
         expect(Math.abs((up?.y ?? 0) - (text?.y ?? 1))).toBeLessThan(12);
       }

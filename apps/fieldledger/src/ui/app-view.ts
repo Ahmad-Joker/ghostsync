@@ -10,8 +10,12 @@ import { metaLines } from "../transfer/capsule-meta.js";
 import { downloadBytes } from "../transfer/export.js";
 import { Guidance } from "./guidance.js";
 import { clear, h } from "./h.js";
+import { connectionNote, countModelDiff, importHeadline } from "./status-text.js";
 
 const NOTICE_MIN_VISIBLE_MS = 1500;
+/** Titles longer than these are also shown in full, wrapped, under the field (see .fl-record-full in fieldledger.css). */
+const SHORT_TITLE = 28;
+const LONG_TITLE = 64;
 const STALE_WORKSPACE_NOTICE =
   "This workspace is showing the last data it could read. The imported capsule was applied, but this version of FieldLedger cannot read the result, so the checklist above may be out of date. Download a backup capsule before you reload or update the app.";
 const truncate = (s: string): string => (s.length > 80 ? `${s.slice(0, 80)}…` : s);
@@ -37,11 +41,10 @@ export class AppView {
   private readonly offlineEl = h("p", { "data-testid": "offline-indicator", class: "gs-chip gs-chip--icon gs-chip--info" });
   private readonly networkEl = h("span", { "data-testid": "network-chip", class: "gs-chip gs-chip--icon gs-chip--ok" });
   private readonly noticeEl: HTMLElement =
-    document.querySelector<HTMLElement>('[data-testid="first-visit-notice"]') ?? h("p", { "data-testid": "first-visit-notice", class: "fl-note" });
-  private readonly bannerEl = h("div", { "data-testid": "update-banner", class: "fl-banner", hidden: true });
-  private readonly offlineHelp = h("p", { id: "offline-help", class: "gs-help-text" });
-  private readonly atmosEl = h("p", { class: "fl-atmos" });
-  private readonly guidance: Guidance;
+    document.querySelector<HTMLElement>('[data-testid="first-visit-notice"]') ?? h("p", { "data-testid": "first-visit-notice", class: "gs-note" });
+  private readonly bannerEl = h("div", { "data-testid": "update-banner", class: "gs-banner", hidden: true });
+  private readonly noteEl = h("p", { class: "gs-status-note", id: "status-note" });
+  private readonly guidance = new Guidance();
   private readonly announcer = h("div", { id: "save-announcer", role: "status", "aria-live": "polite", "aria-atomic": "true", class: "sr-only" });
   private readonly view = h("div", { id: "view" });
   private ws: Workspace | undefined;
@@ -51,15 +54,13 @@ export class AppView {
   private lastAnnounced = "";
   private guardInstalled = false;
   private noticeTimer: number | undefined;
+  private online = true;
 
   constructor(private readonly root: HTMLElement, private readonly c: SessionController) {
-    this.guidance = new Guidance(() => {
-      const first = this.joinInput ?? this.ws?.firstControl() ?? document.getElementById("try-again");
-      return first ?? undefined;
-    });
     this.status = h(
       "section",
-      { class: "status fl-status", "aria-label": "Device status" },
+      { class: "status gs-statusbar", "aria-label": "Device status", "data-network": "online" },
+      this.noteEl,
       h(
         "div",
         { class: "gs-chips" },
@@ -67,18 +68,16 @@ export class AppView {
         h("span", { "data-testid": "transfer-mode", class: "gs-chip gs-chip--icon gs-chip--info" }, "Transfer: file (.gscap)"),
         this.offlineEl,
       ),
-      this.offlineHelp,
-      this.atmosEl,
       this.noticeEl,
       this.bannerEl,
     );
     document.getElementById("gs-header-actions")?.append(this.guidance.helpBtn);
     this.root.append(this.status, this.announcer, this.guidance.root, this.view);
     const net = (): void => {
-      const on = navigator.onLine;
-      this.networkEl.textContent = on ? "Network: online" : "Network: offline";
-      this.networkEl.className = `gs-chip gs-chip--icon ${on ? "gs-chip--ok" : "gs-chip--warn"}`;
-      this.atmosEl.textContent = on ? "Saved beyond the signal." : "Signal lost. Your work remains.";
+      this.online = navigator.onLine;
+      this.networkEl.textContent = this.online ? "Network: online" : "Network: offline";
+      this.networkEl.className = `gs-chip gs-chip--icon ${this.online ? "gs-chip--ok" : "gs-chip--warn"}`;
+      this.renderNote();
     };
     net();
     window.addEventListener("online", net);
@@ -141,25 +140,25 @@ export class AppView {
     this.offlineEl.textContent = offlineCopy(s.state, s.error);
     this.offlineEl.setAttribute("data-offline-state", s.state);
     const tone = s.state === "ready" ? "ok" : s.state === "failed" ? "bad" : s.state === "unsupported" || s.state === "waiting" ? "warn" : "info";
-    this.offlineEl.className = `gs-chip gs-chip--icon gs-chip--${tone} fl-chip-wide`;
-    this.offlineHelp.textContent =
-      s.state === "ready"
-        ? "You can disconnect from the network and continue working."
-        : s.state === "failed" || s.state === "unsupported"
-          ? "Keep working while online. Your edits still save to this device."
-          : "Stay online until this device says it is ready to work offline.";
+    this.offlineEl.className = `gs-chip gs-chip--icon gs-chip--${tone}`;
     this.noticeEl.textContent = FIRST_VISIT_NOTICE;
     this.updateNotice(showFirstVisitNotice(s.state));
     clear(this.bannerEl);
     if (s.state === "waiting") {
       this.bannerEl.hidden = false;
       this.bannerEl.append(
-        h("span", {}, "A new version is ready. Save your work, then update. "),
+        h("span", {}, "A new version is ready. Save your work, then update."),
         h("button", { type: "button", class: "gs-btn--primary", onclick: () => void this.updateNow() }, "Update now"),
       );
     } else {
       this.bannerEl.hidden = true;
     }
+  }
+
+  /** Connection cue and plain status text, from the real network state and the real save state. */
+  private renderNote(): void {
+    this.status.setAttribute("data-network", this.online ? "online" : "offline");
+    this.noteEl.textContent = connectionNote(this.online, this.c.phase, this.c.save.state);
   }
 
   /** Settle pending edits first; only activate the new worker when the flush succeeds. */
@@ -206,7 +205,7 @@ export class AppView {
       name: "incident-id",
       autocomplete: "off",
       spellcheck: "false",
-      "aria-describedby": "incident-rules incident-preview incident-error",
+      "aria-describedby": "incident-rules incident-format incident-preview incident-error",
       oninput: () => {
         if (this.joinPreview !== undefined) this.joinPreview.textContent = previewDocumentId(input.value);
       },
@@ -218,7 +217,7 @@ export class AppView {
     const form = h(
       "form",
       {
-        class: "gs-panel gs-panel--glow fl-join",
+        class: "gs-panel fl-join",
         onsubmit: (e: Event) => {
           e.preventDefault();
           void this.c.open(input.value).then((ok) => {
@@ -227,13 +226,12 @@ export class AppView {
         },
       },
       h("h2", {}, "Open a shared incident"),
-      h("p", { class: "gs-help-text" }, "Everyone sharing this incident log types the same ID. It is opened on this device and stays here until you share it."),
       h("label", { for: "incident-id", class: "fl-label" }, "Incident ID"),
-      input,
-      h("p", { id: "incident-rules", class: "gs-help-text" }, `Both inspectors type the same ID. ${DOCUMENT_ID_RULES}`),
+      h("div", { class: "fl-join-row" }, input, h("button", { type: "submit", class: "gs-btn--primary" }, "Open incident")),
+      h("p", { id: "incident-rules", class: "gs-help-text" }, "Both people enter the same incident ID."),
+      h("p", { id: "incident-format", class: "gs-help-text" }, DOCUMENT_ID_RULES),
       this.joinPreview,
       this.joinError,
-      h("button", { type: "submit", class: "gs-btn--primary fl-primary" }, "Open incident"),
     );
     this.view.append(form);
   }
@@ -264,6 +262,7 @@ export class AppView {
 
   update(): void {
     const c = this.c;
+    this.renderNote();
     if (c.phase === "join") {
       if (this.joinError !== undefined) this.joinError.textContent = c.joinMessage;
       return;
@@ -288,12 +287,16 @@ class Workspace {
   private readonly detailsHost = h("section", { "aria-labelledby": "details-h", class: "gs-panel fl-details" });
   private readonly listEl = h("ol", { "data-testid": "checklist" });
   private readonly invalidHost = h("div");
-  private readonly importResult = h("div", { "data-testid": "import-result", role: "status", "aria-live": "polite" });
-  private readonly mergeSummary = h("div", { "data-testid": "merge-summary" });
+  private readonly importResult = h("div", { "data-testid": "import-result", role: "status", "aria-live": "polite", class: "gs-result" });
+  private readonly mergeSummary = h("div", { "data-testid": "merge-summary", class: "gs-result" });
   private readonly importInput: HTMLInputElement;
   private readonly recoveryHost = h("div");
-  private readonly idLine = h("p", { class: "fl-idline" });
+  private readonly titleId = h("strong", { class: "fl-title-id" });
+  private readonly metaEl = h("p", { class: "fl-meta" });
   private readonly savedHelp = h("p", { class: "gs-help-text fl-saved-help" });
+  private readonly progressText = h("span", { class: "fl-progress-text" });
+  private readonly progressBar = h("progress", { class: "fl-progress-bar", "aria-hidden": "true", max: "1", value: "0" });
+  private readonly transferHeading = h("h2", { id: "transfer-h", tabindex: "-1", class: "gs-panel-title" }, "Transfer (file)");
   private readonly pausedNote = h(
     "p",
     { id: "paused-note", class: "gs-help-text fl-paused", hidden: true },
@@ -323,7 +326,7 @@ class Workspace {
     const addForm = h(
       "form",
       {
-        class: "row",
+        class: "fl-add-form",
         onsubmit: (e: Event) => {
           e.preventDefault();
           const text = this.newItem.value.trim();
@@ -334,10 +337,14 @@ class Workspace {
       },
       h("label", { for: "new-item", class: "fl-label" }, "New checklist item"),
       h("div", { class: "fl-add" }, this.newItem, h("button", { type: "submit", class: "gs-btn--primary" }, "Add item")),
-      h("p", { id: "new-item-help", class: "gs-help-text" }, "Type a task for this incident, then press Enter or the add button."),
+      h("p", { id: "new-item-help", class: "gs-help-text" }, "Type a task for this incident, then press Enter or Add item."),
     );
     this.newItem.setAttribute("aria-describedby", "new-item-help");
-    this.emptyEl = h("p", { class: "fl-empty", hidden: true }, "No field records yet. Add the first checklist item above; it is saved on this device straight away.");
+    this.emptyEl = h("p", { class: "fl-empty", hidden: true }, "No checklist items yet. Add the first one above; it is saved on this device straight away.");
+    const toTransfer = (focus: HTMLElement): void => {
+      focus.scrollIntoView({ block: "start" });
+      focus.focus();
+    };
     this.root = h(
       "main",
       { class: "fl-workspace" },
@@ -346,9 +353,15 @@ class Workspace {
         { class: "gs-panel fl-command", "aria-label": "Incident overview" },
         h(
           "header",
-          { class: "row fl-command-head" },
-          this.idLine,
-          h("button", { type: "button", "data-testid": "change-incident", class: "gs-btn--quiet", onclick: () => void this.c.changeIncident() }, "Change incident"),
+          { class: "fl-command-head" },
+          h("div", { class: "fl-titleblock" }, h("p", { class: "fl-title" }, h("span", { class: "fl-title-label" }, "Incident "), this.titleId), this.metaEl),
+          h(
+            "div",
+            { class: "fl-head-actions" },
+            h("button", { type: "button", class: "gs-btn--quiet", onclick: () => toTransfer(this.transferHeading) }, "Share"),
+            h("button", { type: "button", class: "gs-btn--quiet", onclick: () => toTransfer(this.importInput.disabled ? this.transferHeading : this.importInput) }, "Import"),
+            h("button", { type: "button", "data-testid": "change-incident", class: "gs-btn--quiet", onclick: () => void this.c.changeIncident() }, "Change incident"),
+          ),
         ),
         h("p", { class: "status-line fl-save-line" }, h("span", { class: "fl-save-label" }, "Save status: "), this.saveEl),
         this.savedHelp,
@@ -357,12 +370,12 @@ class Workspace {
       this.alertHost,
       this.editErrorHost,
       this.recoveryHost,
+      this.mergeSummary,
       this.detailsHost,
       h(
         "section",
         { class: "gs-panel fl-records", "aria-labelledby": "list-h" },
-        h("h2", { id: "list-h", class: "gs-panel-title" }, "Checklist"),
-        h("p", { class: "gs-help-text" }, "Each item is a recovered field record. Completed records glow green and are marked Completed."),
+        h("div", { class: "fl-records-head" }, h("h2", { id: "list-h", class: "gs-panel-title" }, "Checklist"), h("p", { class: "fl-progress" }, this.progressText, this.progressBar)),
         addForm,
         this.listEl,
         this.emptyEl,
@@ -370,55 +383,42 @@ class Workspace {
       ),
       h(
         "section",
-        { class: "gs-panel fl-transfer", "aria-labelledby": "transfer-h" },
-        h("h2", { id: "transfer-h", class: "gs-panel-title" }, "Transfer (file)"),
-        h(
-          "p",
-          { class: "fl-carry" },
-          h("span", { class: "fl-carry-node" }, "This device"),
-          h("span", { class: "fl-carry-file", "aria-hidden": "true" }, ".gscap"),
-          h("span", { class: "fl-carry-node" }, "Other device"),
-        ),
-        h("p", { class: "gs-help-text" }, "Changes carried safely between devices. Use a file when the devices are not connected."),
+        { class: "gs-panel gs-transfer fl-transfer", "aria-labelledby": "transfer-h" },
+        this.transferHeading,
+        h("p", {}, "Move this incident's changes to another device. Both devices must open the same incident ID."),
+        h("p", { class: "gs-help-text" }, "FieldLedger shares by file only: there is no QR code here. A file works for any update size."),
         h(
           "div",
-          { class: "fl-transfer-grid" },
+          { class: "gs-transfer-grid" },
           h(
             "div",
-            { class: "fl-transfer-card" },
-            h("h3", {}, "Send your changes"),
-            h("p", { class: "gs-help-text", id: "export-help" }, "A capsule is a small file containing this incident log's changes. Save it, then send it to the other device."),
+            { class: "gs-transfer-group", role: "group", "aria-labelledby": "file-down-h" },
+            h("h3", { id: "file-down-h" }, "Download file"),
+            h("p", { class: "gs-help-text", id: "export-help" }, "Saves a .gscap file you can send by any method. It also works as a backup copy of this incident log."),
             h("button", { type: "button", id: "export-btn", class: "gs-btn--primary", "aria-describedby": "export-help", onclick: () => void this.download("export") }, "Export capsule (.gscap)"),
-            h("p", { class: "gs-help-text" }, "Exporting also works as a backup copy of this incident log."),
           ),
           h(
             "div",
-            { class: "fl-transfer-card" },
-            h("h3", {}, "Receive changes"),
-            h("p", { class: "gs-help-text", id: "import-help" }, "The capsule is checked first. If it passes, its changes are combined with yours. A damaged or wrong file is rejected and nothing is changed."),
-            h("p", { class: "fl-file" }, h("label", { for: "import-file", class: "fl-label" }, "Import capsule (.gscap)"), this.importInput),
+            { class: "gs-transfer-group", role: "group", "aria-labelledby": "file-up-h" },
+            h("h3", { id: "file-up-h" }, "Import file"),
+            h("label", { for: "import-file", class: "fl-label" }, "Import capsule (.gscap)"),
+            this.importInput,
+            h("p", { class: "gs-help-text", id: "import-help" }, "Choosing a file imports it straight away, with no preview. The capsule is checked first: a damaged or wrong file is rejected and nothing is changed."),
+            h("p", { class: "gs-trust", id: "import-trust" }, "Files are not authenticated: only import capsules from people you trust."),
           ),
         ),
         h(
           "details",
           { class: "gs-learn" },
-          h("summary", {}, "Learn more: technical details"),
+          h("summary", {}, "Technical details: checksum"),
           h("p", {}, "The checksum detects damaged data. It does not prove who created or sent the capsule."),
           h("p", {}, "Capsule files are integrity-checked (a checksum detects corruption). They are not authenticated: a checksum does not prove who sent a file."),
         ),
         this.importResult,
-        this.mergeSummary,
       ),
     );
-    this.importInput.setAttribute("aria-describedby", "import-help");
+    this.importInput.setAttribute("aria-describedby", "import-help import-trust");
   }
-
-  /** The control a first-time user would use next (for returning focus after the guide closes). */
-  firstControl(): HTMLElement | undefined {
-    if (this.createTitle?.isConnected === true) return this.createTitle;
-    return this.fields.title ?? this.newItem;
-  }
-
   private async download(kind: "export" | "backup"): Promise<void> {
     const built = await this.c.buildCapsule(kind);
     if (built !== undefined) downloadBytes(built.bytes, built.filename);
@@ -429,18 +429,29 @@ class Workspace {
     const main = this.root;
     if (c.documentId !== undefined) main.setAttribute("data-document-id", c.documentId);
     if (c.replicaId !== undefined) main.setAttribute("data-replica-id", c.replicaId);
-    this.idLine.textContent = `Incident ${c.documentId ?? ""} · This device: ${(c.replicaId ?? "").slice(0, 8)} · ${c.restored ? "Restored saved data" : "New on this device"}`;
+    this.titleId.textContent = c.documentId ?? "";
+    this.metaEl.textContent = `This device: ${(c.replicaId ?? "").slice(0, 8)} · ${c.restored ? "Restored saved data" : "New on this device"}`;
 
     // save indicator (from actual session state only)
     const l = saveLabel(c.save.state, c.save.info);
     this.saveEl.textContent = `${l.symbol} ${l.label}`;
     this.saveEl.setAttribute("data-save-state", c.save.state);
     this.saveEl.setAttribute("data-save-sequence", String(c.save.info.sequence));
-    const tone = c.save.state === "saved" ? "ok" : c.save.state === "error" ? "bad" : c.save.state === "saving" ? "info" : "warn";
-    this.saveEl.className = `gs-chip fl-save-chip gs-chip--${tone}`;
+    // "Nothing to save yet" (saved state, nothing written) is neutral; green is reserved for a real save.
+    const tone =
+      c.save.state === "saved"
+        ? c.save.info.sequence > 0
+          ? "ok"
+          : "neutral"
+        : c.save.state === "error"
+          ? "bad"
+          : c.save.state === "saving"
+            ? "info"
+            : "warn";
+    this.saveEl.className = `gs-save gs-save--${tone}`;
     this.savedHelp.textContent =
       c.save.state === "saved" && c.save.info.sequence > 0
-        ? "Your latest changes are stored safely on this device."
+        ? "Your latest changes are stored on this device."
         : c.save.state === "error"
           ? "Not stored yet. See the message below for what to do."
           : c.save.state === "saved"
@@ -453,7 +464,7 @@ class Workspace {
     this.renderImport();
     const paused = c.phase !== "ready";
     this.pausedNote.hidden = !paused;
-    this.importInput.setAttribute("aria-describedby", paused ? "import-help paused-note" : "import-help");
+    this.importInput.setAttribute("aria-describedby", paused ? "import-help import-trust paused-note" : "import-help import-trust");
     this.newItem.setAttribute("aria-describedby", paused ? "new-item-help paused-note" : "new-item-help");
     this.importInput.disabled = c.importView?.state === "importing" || c.phase !== "ready";
     if (c.importView?.state !== "importing" && this.importInput.value !== "" && c.importView !== undefined) {
@@ -544,6 +555,7 @@ class Workspace {
     const v = this.c.importView;
     clear(this.importResult);
     clear(this.mergeSummary);
+    this.mergeSummary.removeAttribute("data-result");
     this.importResult.removeAttribute("data-import-state");
     this.importResult.removeAttribute("data-import-code");
     if (v === undefined) return;
@@ -578,7 +590,14 @@ class Workspace {
     if (v.diff !== undefined) {
       const ul = h("ul", {});
       for (const line of describeDiff(v.diff)) ul.append(h("li", {}, line));
-      this.mergeSummary.append(h("h3", {}, "What changed"), ul);
+      const saved = v.state === "applied-saved";
+      this.mergeSummary.setAttribute("data-result", saved ? "saved" : "unsaved");
+      this.mergeSummary.append(
+        h("p", { class: "gs-result-headline" }, importHeadline(countModelDiff(v.diff))),
+        h("p", { class: "gs-result-state" }, saved ? "Saved on this device." : "Not saved to this device yet. Use Retry save."),
+        h("h3", {}, "What changed"),
+        ul,
+      );
     }
   }
 
@@ -696,6 +715,10 @@ class Workspace {
       }
     }
     this.emptyEl.hidden = m.items.length + m.invalid.length > 0;
+    const doneCount = m.items.filter(([, item]) => item.done).length;
+    this.progressText.textContent = m.items.length === 0 ? "No items yet" : `${doneCount} of ${m.items.length} done`;
+    this.progressBar.max = Math.max(1, m.items.length);
+    this.progressBar.value = doneCount;
     let prev: Element | null = null;
     for (const [id, item] of m.items) {
       let row = this.rows.get(id);
@@ -735,7 +758,9 @@ class Workspace {
     const down = h("button", { type: "button" }, "Move down");
     const del = h("button", { type: "button" }, "Delete item");
     const stateEl = h("span", { class: "fl-record-state" });
-    const el = h("li", { "data-item-id": id, class: "fl-record" }, done, text, stateEl, up, down, del);
+    // Full title, wrapped, for titles too long to read in the single-line field. Hidden from assistive tech: the field is the control.
+    const fullEl = h("span", { class: "fl-record-full", "aria-hidden": "true" });
+    const el = h("li", { "data-item-id": id, class: "fl-record" }, done, text, stateEl, fullEl, up, down, del);
     let committed = "";
     text.addEventListener("change", () => {
       const v = text.value.trim();
@@ -758,6 +783,8 @@ class Workspace {
         done.checked = d;
         el.setAttribute("data-done", d ? "true" : "false");
         stateEl.textContent = d ? "Completed" : "Open";
+        fullEl.textContent = t;
+        el.setAttribute("data-length", t.length > LONG_TITLE ? "xlong" : t.length > SHORT_TITLE ? "long" : "short");
         done.setAttribute("aria-label", `Done: ${t}`);
         up.setAttribute("aria-label", `Move up: ${t}`);
         down.setAttribute("aria-label", `Move down: ${t}`);

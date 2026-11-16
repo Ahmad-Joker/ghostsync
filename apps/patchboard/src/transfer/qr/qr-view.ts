@@ -100,7 +100,7 @@ export class QrView {
         { class: "pb-seq" },
         h("li", {}, "Open PatchBoard and join the same board."),
         h("li", {}, "Choose Scan QR code (camera) and point it at this screen."),
-        h("li", {}, "Check the capsule details, then choose Import scanned capsule."),
+        h("li", {}, "Check the capsule details, then choose Import scanned capsule to apply it."),
       ),
       h("p", { class: "gs-help-text" }, SHOW_TIP),
     );
@@ -125,7 +125,7 @@ export class QrView {
       "div",
       { "data-testid": "qr-preview", class: "pb-preview" },
       h("h5", {}, "Capsule found. Not imported yet"),
-      h("p", { class: "gs-help-text" }, "Import: Review the capsule first, then choose whether to add its changes."),
+      h("p", { class: "gs-help-text" }, "Scanning only previews this update. Nothing on your board has changed yet."),
       h(
         "dl",
         {},
@@ -138,12 +138,13 @@ export class QrView {
         h("dt", {}, "Size (bytes)"),
         this.previewBytes,
       ),
-      h("details", { class: "gs-learn" }, h("summary", {}, "Learn more: technical details"), h("dl", {}, h("dt", {}, "Checksum (first 12)"), this.metaChecksum)),
+      h("details", { class: "gs-learn" }, h("summary", {}, "Technical details: checksum"), h("dl", {}, h("dt", {}, "Checksum (first 12)"), this.metaChecksum)),
     );
     this.decision = h(
       "div",
       { class: "pb-decision" },
-      h("p", { class: "gs-help-text" }, "Import adds this capsule's changes to your board. Discard throws the scan away and changes nothing."),
+      h("p", { class: "gs-help-text" }, "Import scanned capsule applies these changes to your board. Discard scan throws the scan away and changes nothing."),
+      h("p", { class: "gs-trust" }, "Only import capsules from people you trust: a scanned code does not prove who made it."),
       h("div", { class: "actions" }, this.importBtn, this.discardBtn),
     );
     this.scanFrame = h("div", { class: "gs-scan-frame pb-scan-frame" }, this.video);
@@ -160,22 +161,22 @@ export class QrView {
 
     this.root = h(
       "section",
-      { "aria-labelledby": "qr-h", "data-testid": "qr-transfer", class: "pb-card pb-qr", onkeydown: (e: Event) => this.onKeyDown(e as KeyboardEvent) },
+      { "aria-labelledby": "qr-h", "data-testid": "qr-transfer", class: "gs-transfer-group pb-qr", onkeydown: (e: Event) => this.onKeyDown(e as KeyboardEvent) },
       h("h3", { id: "qr-h" }, "QR transfer"),
-      h("p", {}, "Show this code to another device to transfer changes without internet."),
-      h("p", { class: "gs-help-text" }, "Best for small capsules. If the code does not fit or will not scan, use File transfer above: it always works."),
-      h("h4", {}, "Show a code"),
-      h("div", { class: "row pb-qr-actions" }, this.showBtn, this.hideBtn),
+      h("p", { class: "gs-help-text" }, "Needs no internet. Best when the other device is nearby and the update is small. If the code does not fit or will not scan, use Download file and Import file above: a file always works."),
+      h("h4", {}, "Show QR code"),
+      h("p", { class: "gs-help-text" }, "Shows this board's changes as a QR code for the other device to scan."),
+      h("div", { class: "pb-qr-actions" }, this.showBtn, this.hideBtn),
       this.showPanel,
-      h("h4", {}, "Scan a code"),
-      h("p", { class: "gs-help-text" }, "Scanning reads the capsule but does NOT import it. You review its details first, then choose Import or Discard."),
-      h("div", { class: "row pb-qr-actions" }, this.scanBtn, this.cancelBtn, this.rescanBtn),
+      h("h4", {}, "Scan QR code"),
+      h("p", { class: "gs-help-text" }, "Scanning only previews an update. You review its details first, then choose Import scanned capsule to apply it or Discard scan to drop it."),
+      h("div", { class: "pb-qr-actions" }, this.scanBtn, this.cancelBtn, this.rescanBtn),
       this.scanReason,
       this.scanPanel,
       h(
         "details",
         { class: "gs-learn" },
-        h("summary", {}, "Learn more: technical details"),
+        h("summary", {}, "Technical details: checksum and sender trust"),
         h("dl", {}, h("dt", {}, "Shown code checksum (first 12)"), this.showChecksum),
         h("p", {}, "The checksum detects damaged data. It does not prove who created or sent the capsule."),
         h("p", {}, TRUST_NOTE),
@@ -233,7 +234,7 @@ export class QrView {
     this.scanBtn.disabled = c.scanDisabled;
     this.scanReason.textContent = c.scanDisabled
       ? "Scanning is paused while an import finishes or the camera is in use."
-      : "Needs camera permission. If the camera is unavailable, use File transfer instead.";
+      : "Needs camera permission. If the camera is unavailable, use Download file and Import file instead.";
     this.cancelBtn.hidden = !active;
     this.importBtn.hidden = c.scanState !== "scanned";
     this.discardBtn.hidden = c.scanState !== "scanned";

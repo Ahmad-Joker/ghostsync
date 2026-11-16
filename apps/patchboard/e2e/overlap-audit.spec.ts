@@ -1,5 +1,5 @@
 /**
- * Decorative-effect overlap audit (Kiroween UI polish): fog, glow, grain, pseudo-elements and the camera framing overlay
+ * Overlap audit (interface redesign): positioned layers, pseudo-elements and the camera framing guide
  * must not cover instructions, status text, forms, alerts or QR controls, and the QR canvas must carry no visual effect.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -48,6 +48,7 @@ for (const [name, vp] of [
   test(`E2E-PB-OVL-${name}: decorative effects never cover content (guidance, workspace, failed edit)`, async ({ browser }) => {
     const g = await newProfile(browser, { viewport: vp });
     await g.page.goto("/");
+    await g.page.getByRole("button", { name: "Help", exact: true }).click();
     await expect(g.page.locator("#guidance")).toBeVisible();
     await check(g.page, `guidance-${name}`);
     await g.context.close();

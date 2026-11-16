@@ -2340,3 +2340,40 @@ UI and wording only. Persistence, merge, file transfer, QR decoding, session con
 - Overlap audit: 0 failures in every state. PatchBoard (guidance, workspace, failed edit, QR display, scan in progress, scan review; desktop and 320): 20 to 62 elements and 36 to 137 hit points per state; QR canvas audited on desktop display (no filter, opacity, transform, blend or animation on it or its ancestors). FieldLedger (guidance, workspace, unsaved alert; desktop and 320): 21 to 64 elements, 37 to 176 hit points. One finding fixed: the step badge accepted pointer events.
 - Screenshots: `.agents/tasks/ui-polish/screenshots/` (09 recaptured; 13 and 14 new); see `index.md`.
 - Remaining limitations: contrast is computed from tokens, not measured on rendered pixels; no real Safari or real mobile toolbar test (100px viewport reduction emulated); not re-tested physically; at 320px the QR is intentionally not drawn; the scan-in-progress frame comes from a stub camera, not a physical one; no screen reader testing.
+
+## 2026-11-17 - GhostSync interface redesign (PatchBoard and FieldLedger; uncommitted)
+
+Presentation and guidance only. This replaces the visual direction of the "Kiroween UI polish" above (commit 9d010a7). `packages/` and both `session-controller.ts` files are untouched (git status for `packages/` is empty); service-worker and precache code, validation, QR limits, import confirmation, duplicate handling and every recovery action behave as before. Nothing is staged or committed.
+
+What changed:
+- One shared visual language in `ghostsync-theme.css` (still two byte-identical copies; `tests/theme-parity.test.ts` unchanged and passing): solid warm-charcoal surfaces, clear borders, one muted amber accent for identity and primary actions, green/red/yellow/blue only for status. Removed: fog, glow, gradients, grain, circuit traces, corner notches, pills, step badges, the tagline and all animation/transition other than none.
+- Compact header (small inline SVG mark, GhostSync + app name, Help). "How it works" is now behind a labelled **Help** button, closed by default, never modal, never takes focus; "Close help" or Escape closes it and focus returns to Help. It no longer stores anything in localStorage (`GUIDANCE_KEY` removed).
+- One stable status bar for both apps: plain text derived from the real network and save state ("Offline · Changes still save on this device", or "Changes are NOT saved to this device." when save failed or recovery is pending), chips for network, transfer mode and offline readiness, the first-visit notice and update banner. When `navigator.onLine` is false the bar's top rule, border, icon and text turn amber; the bar keeps its height (checked in SHOT-PB-04). FieldLedger keeps the `NOTICE_MIN_VISIBLE_MS` behaviour (E2E-FL-10).
+- First visit: Open board / Open incident sits on the same row as the ID field (stacked on phones), with one sentence under it saying everyone enters the same ID; above the fold at 390x844 and 320x568.
+- PatchBoard: workspace title (board ID), Share / Import / Change board in the header, Add card, then three columns (stacked on phones) with names and counts always visible; only To do has an empty-state instruction.
+- FieldLedger: incident details as a field-report sheet (title, location/severity/status, notes), then a checklist with "N of M done", Add item, and rows built as: done box + state, full-width title, the full title wrapped below when long, three equal 44px actions.
+- Transfer (both apps, same structure): "Download file" (button still named Export capsule (.gscap)), "Import file" (label unchanged), PatchBoard also "Show QR code" and "Scan QR code". Helper text says QR for nearby devices and small updates, file for larger ones; scanning only previews and Import scanned capsule applies; a file import applies straight away with no preview (read from the controllers). The unknown-sender warning sits at the file import control and at the scanned-capsule Import/Discard decision. FieldLedger says plainly there is no QR. Checksum details moved into disclosures.
+- Demo moment: after an import the board page shows a result block above the Add card form, from the real import view: "Imported: 1 added, 1 change", "Saved on this device." (or "Not saved to this device yet. Use Retry save."), then the existing "What changed" list. Pure helpers in `src/ui/status-text.ts` (unit tested).
+- QR stays still, black on white, quiet zone inside the bitmap; the frame is a flat border; the scan preview has only the dashed guide (dimming overlay removed).
+
+Tests changed (all belong to the previous pass): `e2e/guidance.spec.ts` (Help closed by default, Close help, Escape, focus returns to Help, never blocks, storage-denied case; both apps), `e2e/overlap-audit.spec.ts` (opens Help first; FieldLedger row test follows the new row structure), `e2e/screenshots.spec.ts` (new states and names, 44px and 320px checks; PNGs only when `GS_SCREENSHOT_DIR` is set). New: `tests/status-text.test.ts` in each app. No test from 4b061be or earlier was edited; no `.only`, `.skip` or retries added.
+
+| Command (real runs) | Exit | Result |
+|---|---|---|
+| fieldledger typecheck / build | 0 / 0 | clean / ok |
+| fieldledger unit | 0 | 17 files / 90 tests (was 16 / 85: +status-text) |
+| fieldledger test:dist | 0 | 4 |
+| fieldledger Chromium (2 runs) | 0, 0 | 35 passed each (was 34: +1 screenshot test) |
+| patchboard typecheck / build | 0 / 0 | clean / ok |
+| patchboard unit | 0 | 34 files / 218 tests (was 33 / 213: +status-text) |
+| patchboard test:dist | 0 | 10 |
+| patchboard Chromium (3 runs) | 1, 0, 0 | run 1: 52 passed, 1 failed (E2E-PB-15, Playwright trace-file ENOENT at `context.close()`, no assertion failed; same Windows trace flake noted earlier); runs 2 and 3: 53 passed (was 51: +2 screenshot tests) |
+| qr-transfer | 0 | 10 files / 90 tests |
+
+Screenshots (untracked): `.agents/tasks/ui-redesign/after/` (pairs with `before/`), index in `.agents/tasks/ui-redesign/index.md`. Programmatic checks per state: no horizontal overflow at 320, every control named, 44px targets on phone states, overlap audit 0 failures in every state.
+
+Outstanding checks: the redesign is NOT re-tested on Safari or a physical camera. Still to do: iPhone Safari rendering, safe-area and bottom-toolbar behaviour (only a 100px viewport reduction was emulated), a physical camera scan of the unchanged QR, VoiceOver. The EV-PHYS PASS recorded above applies to the earlier build, not to this interface. Contrast was judged by eye on rendered screenshots, not measured.
+
+### 2026-11-16 - GhostSync interface redesign: neutral "Nothing to save yet" (uncommitted at time of writing)
+- Change: the save indicator shows "Nothing to save yet" (state saved, sequence 0) in the neutral style `gs-save--neutral` instead of the green success style, in both apps (`ui/app-view.ts` tone selection and the shared `ghostsync-theme.css`, copies still identical). Green stays for a real save (sequence above 0). The full-title fallback for long checklist titles on phones is unchanged.
+- Results (real runs, exit 0): FieldLedger typecheck ok, unit 90, build ok, test:dist 4, Chromium 35 passed; PatchBoard typecheck ok, unit 218, build ok, test:dist 10, Chromium 53 passed; `git diff --check` exit 0. No test asserts the indicator colour class, and no screenshot was re-captured for this change. Safari, physical-camera and screen-reader checks remain outstanding for the redesign.

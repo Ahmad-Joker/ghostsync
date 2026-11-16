@@ -1,51 +1,31 @@
 import { h } from "./h.js";
 
-/** Pure UI preference, kept apart from every persistence key. Never touches IndexedDB, the Kit or the board. */
-export const GUIDANCE_KEY = "ghostsync.patchboard.ui.guidance";
-
-function readDismissed(): boolean {
-  try {
-    return window.localStorage.getItem(GUIDANCE_KEY) === "dismissed";
-  } catch {
-    return false;
-  }
-}
-
-function writeDismissed(): void {
-  try {
-    window.localStorage.setItem(GUIDANCE_KEY, "dismissed");
-  } catch {
-    // Storage unavailable: the guide stays closed for this page session only.
-  }
-}
-
 /**
- * The first-time guide and the Help panel are one panel. It is never modal, never an overlay and never
- * takes focus on its own. Closing it returns focus to the Help button when Help opened it, otherwise to the
- * first control the user would use next.
+ * Optional "How it works" guide behind the Help button. It starts closed, is never modal, never an overlay and
+ * never takes focus on its own. It stores nothing: Help opens it, Close help (or Escape) closes it, and focus
+ * returns to Help.
  */
 export class Guidance {
   readonly root: HTMLElement;
   readonly helpBtn: HTMLButtonElement;
-  private openedByHelp = false;
 
-  constructor(private readonly firstControl: () => HTMLElement | undefined) {
+  constructor() {
     this.helpBtn = h(
       "button",
       { type: "button", id: "help-btn", class: "gs-btn--quiet", "aria-controls": "guidance", "aria-expanded": "false", onclick: () => this.toggle() },
-      "How it works",
+      "Help",
     );
-    const begin = h("button", { type: "button", id: "guidance-begin", class: "gs-btn--primary", onclick: () => this.close() }, "Start working");
+    const close = h("button", { type: "button", id: "guidance-close", onclick: () => this.close() }, "Close help");
     this.root = h(
       "section",
       {
         id: "guidance",
-        class: "gs-panel gs-panel--glow gs-guidance",
+        class: "gs-panel gs-guidance",
         "aria-labelledby": "guidance-h",
+        hidden: true,
         onkeydown: (e: Event) => {
           if ((e as KeyboardEvent).key === "Escape") {
             e.preventDefault();
-            this.openedByHelp = true;
             this.close();
           }
         },
@@ -55,19 +35,13 @@ export class Guidance {
       h(
         "ol",
         { class: "gs-steps" },
-        h("li", { class: "gs-step" }, h("span", { class: "gs-step-title" }, "Work normally"), h("span", { class: "gs-step-text" }, "Changes are saved on this device.")),
-        h("li", { class: "gs-step" }, h("span", { class: "gs-step-title" }, "Share"), h("span", { class: "gs-step-text" }, "Download a file or show a QR code.")),
-        h(
-          "li",
-          { class: "gs-step" },
-          h("span", { class: "gs-step-title" }, "Merge"),
-          h("span", { class: "gs-step-text" }, "The other device imports it and both sets of changes are combined."),
-        ),
+        h("li", {}, h("span", { class: "gs-step-title" }, "Work normally"), h("span", { class: "gs-step-text" }, "Changes save on this device, online or offline.")),
+        h("li", {}, h("span", { class: "gs-step-title" }, "Share"), h("span", { class: "gs-step-text" }, "Download a file, or show a QR code to a device next to you.")),
+        h("li", {}, h("span", { class: "gs-step-title" }, "Merge"), h("span", { class: "gs-step-text" }, "The other device imports it and both sets of changes are combined.")),
       ),
-      h("p", { class: "gs-help-text" }, "Your changes stay on this device until you share them. Changes carried safely between devices."),
-      h("div", { class: "gs-guidance-actions" }, begin),
+      h("p", { class: "gs-help-text" }, "To try it with two devices: open the same board ID on both, go offline, edit on each, then exchange QR codes or a file."),
+      h("div", { class: "gs-guidance-actions" }, close),
     );
-    this.sync(!readDismissed());
   }
 
   get isOpen(): boolean {
@@ -80,19 +54,11 @@ export class Guidance {
   }
 
   private toggle(): void {
-    if (this.isOpen) {
-      this.sync(false);
-      return;
-    }
-    this.openedByHelp = true;
-    this.sync(true);
+    this.sync(!this.isOpen);
   }
 
   private close(): void {
-    const byHelp = this.openedByHelp;
-    this.openedByHelp = false;
     this.sync(false);
-    writeDismissed();
-    (byHelp ? this.helpBtn : (this.firstControl() ?? this.helpBtn)).focus();
+    this.helpBtn.focus();
   }
 }
