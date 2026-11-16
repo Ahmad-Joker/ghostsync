@@ -1,4 +1,6 @@
 import "./styles.css";
+import "./styles/ghostsync-theme.css";
+import "./styles/fieldledger.css";
 import { initOfflineReadiness } from "./offline/sw-register.js";
 import { SessionController } from "./session/session-controller.js";
 import { AppView } from "./ui/app-view.js";

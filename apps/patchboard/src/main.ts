@@ -1,4 +1,6 @@
 import "./styles.css";
+import "./styles/ghostsync-theme.css";
+import "./styles/patchboard-ui.css";
 import { decodeCapsule } from "@ghostsync/capsule";
 import { chooseScale, createScanSession } from "@ghostsync/qr-transfer/browser";
 import { initOfflineReadiness } from "./offline/sw-register.js";

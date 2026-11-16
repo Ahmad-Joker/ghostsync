@@ -7,7 +7,7 @@ import { h } from "./h.js";
 
 const cap = (s: string, n: number): string => {
   const points = Array.from(s);
-  return points.length > n ? `${points.slice(0, n - 1).join("")}…` : s;
+  return points.length > n ? `${points.slice(0, n - 1).join("")}\u2026` : s;
 };
 
 type Btn = HTMLButtonElement;
@@ -35,7 +35,7 @@ export class CardRow {
     readonly id: string,
   ) {
     const mk = (action: string, text: string, onclick: () => void): Btn => {
-      const b = h("button", { type: "button", "data-action": action, onclick }, text);
+      const b = h("button", { type: "button", class: action === "delete" ? "gs-btn--danger" : action === "edit" ? "gs-btn--quiet" : "", "data-action": action, onclick }, text);
       this.buttons.set(action, b);
       return b;
     };
@@ -48,9 +48,13 @@ export class CardRow {
       mk("edit", "Edit card", () => this.openEdit()),
       mk("delete", "Delete card", () => this.askDelete()),
     );
-    this.confirmDelete = h("button", { type: "button", "data-action": "confirm-delete", onclick: () => this.c.deleteCard(this.id) }, "Confirm delete");
+    this.confirmDelete = h("button", { type: "button", class: "gs-btn--danger", "data-action": "confirm-delete", onclick: () => this.c.deleteCard(this.id) }, "Confirm delete");
     this.keepCard = h("button", { type: "button", "data-action": "keep", onclick: () => this.stopConfirm(true) }, "Keep card");
-    this.confirm.append(this.confirmDelete, this.keepCard);
+    this.confirm.append(
+      h("p", { class: "gs-help-text pb-confirm-text" }, "Delete removes this card from the board. Share a capsule to remove it on other devices too."),
+      this.confirmDelete,
+      this.keepCard,
+    );
     this.el = h(
       "li",
       { "data-card-id": id, tabindex: "-1", class: "card" },
@@ -95,8 +99,14 @@ export class CardRow {
   setEnds(first: boolean, last: boolean): void {
     const up = this.buttons.get("up");
     const down = this.buttons.get("down");
-    if (up !== undefined) up.disabled = !this.editable || first;
-    if (down !== undefined) down.disabled = !this.editable || last;
+    if (up !== undefined) {
+      up.disabled = !this.editable || first;
+      up.title = up.disabled ? (first ? "Already at the top of this column." : "Editing is unavailable right now.") : "";
+    }
+    if (down !== undefined) {
+      down.disabled = !this.editable || last;
+      down.title = down.disabled ? (last ? "Already at the bottom of this column." : "Editing is unavailable right now.") : "";
+    }
   }
 
   action(name: string): HTMLButtonElement | undefined {
@@ -128,7 +138,7 @@ export class CardRow {
     const notes = h("textarea", { id: `n-${this.id}`, name: "notes", rows: "3", maxlength: String(LIMITS.notes) });
     notes.value = this.baseline.notes;
     title.value = this.baseline.title;
-    const save = h("button", { type: "submit" }, "Save card");
+    const save = h("button", { type: "submit", class: "gs-btn--primary" }, "Save card");
     const cancel = h("button", { type: "button", onclick: () => this.closeEdit(true) }, "Cancel edit");
     this.formError = h("p", { role: "alert", class: "error-text" });
     this.formButtons = { save, cancel };
@@ -141,8 +151,8 @@ export class CardRow {
           this.submit(title, notes);
         },
       },
-      h("p", {}, h("label", { for: title.id }, "Title"), title),
-      h("p", {}, h("label", { for: notes.id }, "Notes"), notes),
+      h("div", { class: "pb-field" }, h("label", { for: title.id }, "Title"), title),
+      h("div", { class: "pb-field" }, h("label", { for: notes.id }, "Notes"), notes),
       this.formError,
       h("div", { class: "actions" }, save, cancel),
     );
@@ -206,17 +216,22 @@ export class IncompleteRow {
     private readonly c: SessionController,
     readonly id: string,
   ) {
-    this.restore = h("button", { type: "button", onclick: () => this.c.restoreInvalid(this.id) }, "Restore card");
+    this.restore = h("button", { type: "button", class: "gs-btn--primary", onclick: () => this.c.restoreInvalid(this.id) }, "Restore card");
     this.discard = h("button", { type: "button", onclick: () => this.setConfirm(true, true) }, "Discard card");
-    this.confirmDiscard = h("button", { type: "button", onclick: () => this.c.discardInvalid(this.id) }, "Confirm discard");
+    this.confirmDiscard = h("button", { type: "button", class: "gs-btn--danger", onclick: () => this.c.discardInvalid(this.id) }, "Confirm discard");
     this.keep = h("button", { type: "button", onclick: () => this.setConfirm(false, true) }, "Keep incomplete card");
     this.actions.append(this.restore, this.discard);
-    this.confirm.append(this.confirmDiscard, this.keep);
+    this.confirm.append(
+      h("p", { class: "gs-help-text pb-confirm-text" }, "Discarding permanently removes this incomplete card. This cannot be undone."),
+      this.confirmDiscard,
+      this.keep,
+    );
     this.el = h(
       "li",
       { "data-card-id": id, "data-invalid": "true", class: "card invalid", tabindex: "-1" },
       h("strong", {}, "Conflicted or incomplete card"),
       this.fieldsEl,
+      h("p", { class: "gs-help-text" }, "Restore puts a repaired copy in To do. Discard removes it from this device."),
       this.actions,
       this.confirm,
     );

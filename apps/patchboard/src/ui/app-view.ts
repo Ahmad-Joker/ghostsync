@@ -13,8 +13,16 @@ import type { QrTransferController } from "../transfer/qr/qr-controller.js";
 import { QrView } from "../transfer/qr/qr-view.js";
 import { TRANSFER_MODE_LABEL } from "../transfer/qr/transfer-mode.js";
 import { CardRow, IncompleteRow } from "./card-row.js";
+import { Guidance } from "./guidance.js";
 import { clear, h } from "./h.js";
 
+/** Horizontal padding and borders of the QR panel plus its frame (see patchboard-ui.css). */
+const QR_CHROME_PX = 88;
+const EMPTY_COPY: Record<ColumnId, string> = {
+  todo: "Nothing here yet. Type a title under Add a card, then choose Add card.",
+  doing: "Nothing in progress. Use Move to Doing on a card when work starts.",
+  done: "Nothing finished yet. Use Move to Done on a card when it is complete.",
+};
 const STALE_WORKSPACE_NOTICE =
   "The board could not be re-read after this import, so it is showing its last readable data. Reload the app, or download a backup capsule first.";
 const MERGE_HELP =
@@ -26,10 +34,12 @@ export class AppView {
   private shownKey = "";
   private offlineHandle: OfflineHandle | undefined;
   private readonly status: HTMLElement;
-  private readonly offlineEl = h("p", { "data-testid": "offline-indicator" });
-  private readonly networkEl = h("span", { "data-testid": "network-chip" });
-  private readonly noticeEl = h("p", { "data-testid": "first-visit-notice" });
-  private readonly bannerEl = h("div", { "data-testid": "update-banner", hidden: true });
+  private readonly offlineEl = h("p", { "data-testid": "offline-indicator", class: "gs-chip gs-chip--icon gs-chip--warn pb-offline" });
+  private readonly networkEl = h("span", { "data-testid": "network-chip", class: "gs-chip gs-chip--icon gs-chip--ok" });
+  private readonly noticeEl = h("p", { "data-testid": "first-visit-notice", class: "gs-help-text" });
+  private readonly noteEl = h("p", { class: "gs-help-text pb-status-note", id: "status-note" });
+  private readonly guidance = new Guidance(() => document.getElementById("board-id") ?? document.getElementById("new-title") ?? undefined);
+  private readonly bannerEl = h("div", { "data-testid": "update-banner", class: "pb-banner", hidden: true });
   private readonly updateBtn: HTMLButtonElement = h("button", { type: "button", onclick: () => void this.updateNow() }, "Update now");
   private readonly announcer = h("div", { "data-testid": "announcer", role: "status", "aria-live": "polite", "aria-atomic": "true", class: "sr-only" });
   private readonly saveAnnouncer = h("div", { "data-testid": "save-announcer", role: "status", "aria-live": "polite", "aria-atomic": "true", class: "sr-only" });
@@ -39,7 +49,8 @@ export class AppView {
   private joinPreview: HTMLElement | undefined;
   private joinError: HTMLElement | undefined;
   private guardInstalled = false;
-  private readonly modeEl = h("span", { "data-testid": "transfer-mode", "data-transfer-mode": "file" }, TRANSFER_MODE_LABEL.file);
+  private online = true;
+  private readonly modeEl = h("span", { "data-testid": "transfer-mode", "data-transfer-mode": "file", class: "gs-chip gs-chip--icon gs-chip--info" }, TRANSFER_MODE_LABEL.file);
 
   constructor(
     private readonly root: HTMLElement,
@@ -49,15 +60,36 @@ export class AppView {
     this.status = h(
       "section",
       { class: "status", "aria-label": "Device status" },
-      this.networkEl,
-      this.modeEl,
+      h("div", { class: "gs-chips" }, this.networkEl, this.modeEl),
       this.offlineEl,
+      this.noteEl,
       this.noticeEl,
       this.bannerEl,
     );
-    this.root.append(h("h1", {}, "PatchBoard"), this.status, this.announcer, this.saveAnnouncer, this.view);
+    const header = h(
+      "header",
+      { class: "gs-header" },
+      h(
+        "div",
+        { class: "gs-brand" },
+        h("span", { class: "gs-mark pb-mark", "aria-hidden": "true" }),
+        h(
+          "div",
+          { class: "gs-brand-text" },
+          h("p", { class: "gs-brand-name" }, "GhostSync"),
+          h("h1", { class: "gs-app-name" }, "PatchBoard"),
+          h("p", { class: "gs-tagline" }, "Collaboration beyond the signal"),
+        ),
+      ),
+      h("div", { class: "gs-header-actions" }, this.guidance.helpBtn),
+    );
+    this.root.append(header, this.status, this.guidance.root, this.announcer, this.saveAnnouncer, this.view);
     const net = (): void => {
-      this.networkEl.textContent = navigator.onLine ? "Network: online" : "Network: offline";
+      const online = navigator.onLine;
+      this.networkEl.textContent = online ? "Network: online" : "Network: offline";
+      this.networkEl.className = `gs-chip gs-chip--icon ${online ? "gs-chip--ok" : "gs-chip--warn"}`;
+      this.online = online;
+      this.renderNote();
     };
     net();
     window.addEventListener("online", net);
@@ -87,6 +119,9 @@ export class AppView {
     const s = this.offline;
     this.offlineEl.textContent = offlineCopy(s.state, s.error);
     this.offlineEl.setAttribute("data-offline-state", s.state);
+    const tone = s.state === "ready" ? "ok" : s.state === "failed" || s.state === "unsupported" ? "bad" : "warn";
+    this.offlineEl.className = `gs-chip gs-chip--icon gs-chip--${tone} pb-offline`;
+    this.renderNote();
     this.noticeEl.textContent = FIRST_VISIT_NOTICE;
     this.noticeEl.hidden = !showFirstVisitNotice(s.state);
     clear(this.bannerEl);
@@ -100,6 +135,13 @@ export class AppView {
     } else {
       this.bannerEl.hidden = true;
     }
+  }
+
+  private renderNote(): void {
+    const parts: string[] = [];
+    if (!this.online) parts.push("Signal lost. Your work remains.");
+    if (this.offline.state === "ready") parts.push("You can disconnect from the network and continue working.");
+    this.noteEl.textContent = parts.join(" ");
   }
 
   /** Settle pending edits first; only activate the new worker when the flush succeeds. */
@@ -163,25 +205,32 @@ export class AppView {
         },
       },
       h("h2", {}, "Open a shared board"),
+      h("p", { class: "gs-help-text" }, "Type the board ID your team shares. The board opens on this device and your changes are stored here."),
       h("label", { for: "board-id" }, "Board ID"),
       input,
-      h("p", { id: "board-rules" }, `Everyone who shares this board types the same ID. ${BOARD_ID_RULES}`),
+      h("p", { id: "board-rules", class: "gs-help-text" }, `Everyone who shares this board types the same ID. ${BOARD_ID_RULES}`),
       this.joinPreview,
       this.joinError,
-      h("button", { type: "submit" }, "Open board"),
+      h("button", { type: "submit", class: "gs-btn--primary" }, "Open board"),
     );
-    this.view.append(form);
+    form.className = "pb-join";
+    this.view.append(h("section", { class: "gs-panel gs-panel--glow pb-join-panel", "aria-label": "Open a board" }, form));
   }
 
   private buildMessage(title: string, retry: boolean): void {
     this.view.append(
       h(
         "section",
-        { "data-testid": "session-message", role: "alert" },
+        { "data-testid": "session-message", role: "alert", class: "gs-panel pb-message" },
         h("h2", {}, title),
         h("p", { id: "session-message-text" }, this.c.errorMessage),
-        retry ? h("button", { type: "button", onclick: () => void this.c.open(this.c.boardId ?? "") }, "Try again") : null,
-        h("button", { type: "button", onclick: () => this.c.openJoin() }, "Open a different board"),
+        h("p", { class: "gs-help-text" }, retry ? "Choose Try again once the problem is fixed, or open a different board." : "Open a different board, or reload the page and try again."),
+        h(
+          "div",
+          { class: "actions" },
+          retry ? h("button", { type: "button", class: "gs-btn--primary", onclick: () => void this.c.open(this.c.boardId ?? "") }, "Try again") : null,
+          h("button", { type: "button", onclick: () => this.c.openJoin() }, "Open a different board"),
+        ),
       ),
     );
   }
@@ -219,9 +268,10 @@ class Workspace {
   private readonly editErrorHost = h("div");
   private shownEditError: SessionController["editError"];
   private readonly noticeHost = h("div");
-  private readonly importResult = h("div", { "data-testid": "import-result", role: "status", "aria-live": "polite" });
-  private readonly mergeSummary = h("div", { "data-testid": "merge-summary" });
+  private readonly importResult = h("div", { "data-testid": "import-result", role: "status", "aria-live": "polite", class: "pb-import" });
+  private readonly mergeSummary = h("div", { "data-testid": "merge-summary", class: "pb-merge" });
   private readonly importInput: HTMLInputElement;
+  private readonly importHelp = h("p", { id: "import-help", class: "gs-help-text" });
   private changeBtn: HTMLButtonElement | undefined;
   private readonly recoveryHost = h("div");
   private readonly idLine = h("p");
@@ -231,6 +281,10 @@ class Workspace {
   private readonly board: HTMLElement;
   private readonly lists = new Map<ColumnId, HTMLElement>();
   private readonly headings = new Map<ColumnId, HTMLElement>();
+  private readonly counts = new Map<ColumnId, HTMLElement>();
+  private readonly empties = new Map<ColumnId, HTMLElement>();
+  private readonly saveHelp = h("p", { class: "gs-help-text pb-save-help" });
+  private readonly invalidIntro = h("p", { class: "gs-help-text" }, "These cards have missing or conflicting fields, so they cannot be shown as normal cards. Restore rebuilds a card from what could be read and puts it in To do. Discard removes it from this device.");
   private readonly invalidHeading = h("h3", { tabindex: "-1" });
   private readonly invalidList = h("ul", { class: "cards" });
   private readonly rows = new Map<string, CardRow>();
@@ -239,11 +293,19 @@ class Workspace {
   private readonly qrView: QrView | undefined;
 
   constructor(private readonly c: SessionController, qr?: QrTransferController) {
-    if (qr !== undefined) this.qrView = new QrView(qr, () => this.qrView?.root.clientWidth ?? 0);
+    // The code sits inside a padded frame and panel; reserve that chrome so the canvas never overflows it.
+    if (qr !== undefined) {
+      this.qrView = new QrView(
+        qr,
+        () => Math.max(0, (this.qrView?.root.clientWidth ?? 0) - QR_CHROME_PX),
+        () => this.c.boardId,
+      );
+    }
     this.importInput = h("input", {
       id: "import-file",
       type: "file",
       accept: ".gscap,application/vnd.ghostsync.capsule",
+      "aria-describedby": "import-help",
       "data-testid": "import-input",
       onchange: () => {
         const f = this.importInput.files?.[0];
@@ -261,9 +323,11 @@ class Workspace {
           const title = this.newTitle.value.trim();
           if (title === "") {
             this.addError.textContent = "Enter a title.";
+            this.newTitle.setAttribute("aria-invalid", "true");
             return;
           }
           this.addError.textContent = "";
+          this.newTitle.removeAttribute("aria-invalid");
           this.c.addCard(title, this.newNotes.value);
           if (this.c.editError === undefined) {
             this.newTitle.value = "";
@@ -271,18 +335,44 @@ class Workspace {
           }
         },
       },
-      h("p", {}, h("label", { for: "new-title" }, "New card title"), this.newTitle),
-      h("p", {}, h("label", { for: "new-notes" }, "Notes (optional)"), this.newNotes),
-      this.addError,
-      h("button", { type: "submit" }, "Add card"),
+      h(
+        "div",
+        { class: "pb-field" },
+        h("label", { for: "new-title" }, "New card title"),
+        this.newTitle,
+        h("p", { id: "add-title-help", class: "gs-help-text" }, "A short name for the task. It is added to To do."),
+        this.addError,
+      ),
+      h(
+        "div",
+        { class: "pb-field" },
+        h("label", { for: "new-notes" }, "Notes (optional)"),
+        this.newNotes,
+        h("p", { id: "add-notes-help", class: "gs-help-text" }, "Extra detail for whoever picks the card up."),
+      ),
+      h("button", { type: "submit", class: "gs-btn--primary pb-add-btn" }, "Add card"),
     );
+    this.newTitle.setAttribute("aria-describedby", "add-title-help add-error");
+    this.newNotes.setAttribute("aria-describedby", "add-notes-help");
     this.board = h("div", { id: "board", "data-testid": "board" });
     for (const col of COLUMNS) {
       const heading = h("h3", { tabindex: "-1" }, COLUMN_LABEL[col]);
       const list = h("ul", { class: "cards" });
+      const count = h("span", { class: "pb-count" });
+      const empty = h("p", { class: "pb-empty gs-help-text" }, EMPTY_COPY[col]);
       this.headings.set(col, heading);
       this.lists.set(col, list);
-      this.board.append(h("section", { "data-testid": `column-${col}`, "data-column": col, class: "column" }, heading, list));
+      this.counts.set(col, count);
+      this.empties.set(col, empty);
+      this.board.append(
+        h(
+          "section",
+          { "data-testid": `column-${col}`, "data-column": col, class: "column" },
+          h("div", { class: "pb-col-head" }, heading, count),
+          list,
+          empty,
+        ),
+      );
     }
     this.changeBtn = h("button", { type: "button", "data-testid": "change-board", onclick: () => void this.c.changeBoard() }, "Change board");
     this.root = h(
@@ -290,32 +380,70 @@ class Workspace {
       {},
       h(
         "header",
-        { class: "row" },
+        { class: "row pb-board-head" },
         this.idLine,
         this.changeBtn,
       ),
       h("p", { class: "status-line" }, h("span", {}, "Save status: "), this.saveEl),
+      this.saveHelp,
       this.alertHost,
       this.editErrorHost,
       this.noticeHost,
       this.recoveryHost,
-      h("p", { "data-testid": "merge-help" }, MERGE_HELP),
-      h("section", { "aria-labelledby": "add-h" }, h("h2", { id: "add-h" }, "Add a card"), addForm),
-      h("section", { "aria-labelledby": "board-h" }, h("h2", { id: "board-h" }, "Board"), this.board),
+      h("section", { "aria-labelledby": "add-h", class: "gs-panel pb-add" }, h("h2", { id: "add-h" }, "Add a card"), addForm),
+      h("section", { "aria-labelledby": "board-h", class: "pb-board-section" }, h("h2", { id: "board-h" }, "Board"), this.board),
       h(
         "section",
-        { "data-testid": "invalid-cards", "aria-labelledby": "invalid-h" },
+        { "data-testid": "invalid-cards", "aria-labelledby": "invalid-h", class: "pb-invalid-section" },
         h("h2", { id: "invalid-h", class: "visually-subtle" }, "Incomplete cards"),
         this.invalidHeading,
+        this.invalidIntro,
         this.invalidList,
       ),
       h(
         "section",
-        { "aria-labelledby": "transfer-h" },
-        h("h2", { id: "transfer-h" }, "Transfer"),
-        h("p", {}, "Capsule files are integrity-checked (a checksum detects corruption). They are not authenticated: a checksum does not prove who sent a file."),
-        h("button", { type: "button", id: "export-btn", onclick: () => void this.download("export") }, "Export capsule (.gscap)"),
-        h("p", {}, h("label", { for: "import-file" }, "Import capsule file (.gscap)"), this.importInput),
+        { "aria-labelledby": "transfer-h", class: "gs-panel gs-panel--glow pb-portal" },
+        h("h2", { id: "transfer-h" }, "Transfer Portal"),
+        h(
+          "p",
+          {},
+          "Carry this board's changes to another device. A capsule is a small file containing this board's changes. Changes carried safely between devices.",
+        ),
+        h(
+          "p",
+          { class: "gs-help-text" },
+          "Which should I use? File transfer always works. Use a QR code only when the capsule is small and both devices are side by side.",
+        ),
+        h(
+          "div",
+          { class: "pb-card pb-file", role: "group", "aria-labelledby": "file-h" },
+          h("h3", { id: "file-h" }, "File transfer"),
+          h("p", { class: "gs-help-text" }, "Always works, even with a large board."),
+          h(
+            "ol",
+            { class: "pb-seq" },
+            h("li", {}, "Export a capsule on this device."),
+            h("li", {}, "Send the file to the other device any way you like."),
+            h("li", {}, "On that device, choose the file under Import."),
+          ),
+          h("button", { type: "button", id: "export-btn", class: "gs-btn--primary", onclick: () => void this.download("export") }, "Export capsule (.gscap)"),
+          h(
+            "div",
+            { class: "pb-field" },
+            h("label", { for: "import-file" }, "Import capsule file (.gscap)"),
+            this.importInput,
+            this.importHelp,
+          ),
+          h("p", { class: "gs-help-text" }, "Files are not authenticated: only import capsules from people you trust."),
+          h(
+            "details",
+            { class: "gs-learn" },
+            h("summary", {}, "Learn more: checksum and backups"),
+            h("p", {}, "The checksum detects damaged data. It does not prove who created or sent the capsule."),
+            h("p", {}, "If saving ever fails, a button to download a backup capsule appears at the top of this page. Use it before closing or reloading."),
+            h("p", { "data-testid": "merge-help" }, MERGE_HELP),
+          ),
+        ),
         this.importResult,
         this.mergeSummary,
         this.qrView?.root,
@@ -339,6 +467,16 @@ class Workspace {
     this.saveEl.textContent = `${l.symbol} ${l.label}`;
     this.saveEl.setAttribute("data-save-state", c.save.state);
     this.saveEl.setAttribute("data-save-sequence", String(c.save.info.sequence));
+    const tone = c.save.state === "saved" ? "ok" : c.save.state === "error" ? "bad" : c.save.state === "saving" ? "info" : "warn";
+    this.saveEl.className = `gs-chip gs-chip--${tone}`;
+    this.saveHelp.textContent =
+      c.save.state === "saved"
+        ? "Your latest changes are stored safely on this device. Saved beyond the signal."
+        : c.save.state === "error"
+          ? "Saving failed. Use Retry save below, or download a backup capsule so nothing is lost."
+          : c.save.state === "saving"
+            ? "Saving your changes to this device. Keep this page open."
+            : "Your changes are saved to this device automatically.";
 
     this.renderAlert();
     this.renderEditError();
@@ -347,6 +485,11 @@ class Workspace {
     this.renderImport();
     this.qrView?.update();
     this.importInput.disabled = c.importPending || c.phase !== "ready";
+    this.importHelp.textContent = this.importInput.disabled
+      ? c.importPending
+        ? "Import is paused while another import finishes."
+        : "Import is unavailable until the board has finished saving or reopening."
+      : "Choosing a file imports it straight away. A summary of what changed appears below.";
     if (this.changeBtn !== undefined) this.changeBtn.disabled = c.importPending;
     if (c.importView?.state !== "importing" && this.importInput.value !== "" && c.importView !== undefined) {
       this.importInput.value = "";
@@ -375,7 +518,8 @@ class Workspace {
         h("h2", {}, isImport ? "Capsule applied, but NOT saved to this device" : "Your latest changes are NOT saved to this device."),
         h("p", {}, mapped.message),
         h("p", {}, LOSS_WARNING),
-        h("button", { type: "button", onclick: () => void this.c.retrySave() }, "Retry save"),
+        h("p", { class: "gs-help-text" }, "What to do next: choose Retry save. If it keeps failing, download a backup capsule before you close this page."),
+        h("button", { type: "button", class: "gs-btn--primary", onclick: () => void this.c.retrySave() }, "Retry save"),
         h("button", { type: "button", onclick: () => void this.download("backup") }, "Download backup capsule"),
       ),
     );
@@ -428,8 +572,9 @@ class Workspace {
         { "data-testid": "recovery-panel", role: "alert", class: "alert" },
         h("h2", {}, "Could not save before closing"),
         h("p", {}, this.c.recoveryMessage),
-        h("button", { type: "button", onclick: () => void this.download("backup") }, "Download backup capsule"),
-        h("button", { type: "button", onclick: () => void this.c.discardAndSwitch() }, "Discard unsaved changes and switch"),
+        h("p", { class: "gs-help-text" }, "What to do next: download a backup capsule first. Discarding permanently drops the unsaved changes and opens the board chooser."),
+        h("button", { type: "button", class: "gs-btn--primary", onclick: () => void this.download("backup") }, "Download backup capsule"),
+        h("button", { type: "button", class: "gs-btn--danger", onclick: () => void this.c.discardAndSwitch() }, "Discard unsaved changes and switch"),
       ),
     );
   }
@@ -510,6 +655,14 @@ class Workspace {
       }
     }
     this.invalidHeading.textContent = `Conflicted or incomplete cards (${m.invalid.length})`;
+    this.invalidIntro.hidden = m.invalid.length === 0;
+    for (const col of COLUMNS) {
+      const n = m.columns[col].length;
+      const count = this.counts.get(col);
+      if (count !== undefined) count.textContent = n === 1 ? "1 card" : `${n} cards`;
+      const empty = this.empties.get(col);
+      if (empty !== undefined) empty.hidden = n > 0;
+    }
     let prevInvalid: Element | null = null;
     for (const inv of m.invalid) {
       let row = this.incomplete.get(inv.id);
