@@ -117,7 +117,7 @@ test("E2E-QR-03: every cleanup trigger ends with ended tracks, an empty video so
   await scanFrame(page, capsuleFrame(await peerCapsule()));
   expect(await lastStreamStates(page)).toEqual(["ended"]);
   expect(await videoSource(page)).toBe("none");
-  await expect(qrBtn(page, "qr-import-btn")).toBeFocused();
+  await expect(page.getByTestId("qr-review-heading")).toBeFocused();
   await expect(modeEl(page)).toHaveAttribute("data-transfer-mode", "qr-scan");
   await press(page, qrBtn(page, "qr-discard-btn"));
   await expectScanState(page, "idle");

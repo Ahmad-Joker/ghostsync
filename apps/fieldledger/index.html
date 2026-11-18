@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; img-src 'self' data:"
@@ -11,6 +11,78 @@
     <title>FieldLedger</title>
   </head>
   <body>
+    <!-- gs-sprite:start -->
+    <svg id="gs-sprite" class="sr-only" aria-hidden="true" focusable="false" width="0" height="0">
+      <symbol id="gs-ghost" viewBox="0 0 100 100">
+        <path d="M18 94V50C18 26 32 10 50 10s32 16 32 40v44l-8.5-7-7.5 7-8-7-8 7-8-7-7.5 7-8.5-7z" fill="#f7f1e3" stroke="#2a1a55" stroke-width="3" stroke-linejoin="round" />
+        <path d="M32 24Q50 4 68 24Q50 17 32 24z" fill="#7f3dff" stroke="#2a1a55" stroke-width="2.5" stroke-linejoin="round" />
+        <ellipse cx="40" cy="46" rx="4" ry="5.5" fill="#2a1a55" />
+        <ellipse cx="60" cy="46" rx="4" ry="5.5" fill="#2a1a55" />
+        <circle cx="32" cy="57" r="4" fill="#ffb4c8" />
+        <circle cx="68" cy="57" r="4" fill="#ffb4c8" />
+        <path d="M43 59Q50 66 57 59" fill="none" stroke="#2a1a55" stroke-width="3" stroke-linecap="round" />
+        <path d="M19 74Q50 86 81 74V83Q50 95 19 83z" fill="#7f3dff" stroke="#2a1a55" stroke-width="2.5" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="gs-lantern" viewBox="0 0 24 44">
+        <path d="M7 11Q12 -1 17 11" fill="none" stroke="#2a1a55" stroke-width="2.5" stroke-linecap="round" />
+        <rect x="6" y="9" width="12" height="4" rx="1.5" fill="#2a1a55" />
+        <rect x="5" y="13" width="14" height="22" rx="3" fill="#b79cff" stroke="#2a1a55" stroke-width="2.5" />
+        <ellipse cx="12" cy="24" rx="4" ry="7" fill="#ffd98a" />
+        <rect x="6" y="35" width="12" height="4" rx="1.5" fill="#2a1a55" />
+      </symbol>
+      <symbol id="gs-capsule" viewBox="0 0 48 34">
+        <rect x="2" y="2" width="44" height="30" rx="4" fill="#f3e9d2" stroke="#2a1a55" stroke-width="2.5" />
+        <path d="M3.5 4L24 19L44.5 4" fill="none" stroke="#2a1a55" stroke-width="2.5" stroke-linejoin="round" />
+        <circle cx="24" cy="20" r="6.5" fill="#7f3dff" stroke="#2a1a55" stroke-width="2" />
+        <path d="M21 20l2.3 2.4L27.5 17" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </symbol>
+      <symbol id="gs-moon" viewBox="0 0 40 40">
+        <path d="M30 5A16 16 0 1 0 35 30A12.5 12.5 0 0 1 30 5z" fill="#ffd98a" />
+      </symbol>
+      <symbol id="gs-phone" viewBox="0 0 60 100">
+        <rect x="3" y="3" width="54" height="94" rx="9" fill="#261845" stroke="currentColor" stroke-width="4" />
+        <path d="M23 11h14" stroke="currentColor" stroke-width="3" stroke-linecap="round" />
+        <rect x="12" y="26" width="36" height="14" rx="3" fill="currentColor" fill-opacity="0.35" />
+        <rect x="12" y="46" width="36" height="14" rx="3" fill="currentColor" fill-opacity="0.35" />
+        <rect x="12" y="66" width="24" height="14" rx="3" fill="currentColor" fill-opacity="0.35" />
+      </symbol>
+      <symbol id="gs-laptop" viewBox="0 0 120 80">
+        <rect x="14" y="4" width="92" height="58" rx="5" fill="#261845" stroke="currentColor" stroke-width="4" />
+        <rect x="24" y="14" width="30" height="38" rx="3" fill="currentColor" fill-opacity="0.35" />
+        <rect x="60" y="14" width="36" height="16" rx="3" fill="currentColor" fill-opacity="0.35" />
+        <rect x="60" y="36" width="36" height="16" rx="3" fill="currentColor" fill-opacity="0.35" />
+        <path d="M4 70H116L108 77H12z" fill="currentColor" />
+      </symbol>
+      <symbol id="gs-courier" viewBox="0 0 140 110">
+        <use href="#gs-ghost" x="25" y="5" width="90" height="90" />
+        <path d="M100 66Q110 58 120 30" fill="none" stroke="#2a1a55" stroke-width="3.5" stroke-linecap="round" />
+        <use href="#gs-lantern" x="108" y="2" width="22" height="40" />
+        <use href="#gs-capsule" x="2" y="58" width="46" height="32" transform="rotate(-12 25 74)" />
+      </symbol>
+      <symbol id="gs-courier-sm" viewBox="0 0 64 64">
+        <use href="#gs-ghost" x="4" y="8" width="50" height="50" />
+        <path d="M46 36Q50 30 52 20" fill="none" stroke="#2a1a55" stroke-width="2.5" stroke-linecap="round" />
+        <use href="#gs-lantern" x="44" y="2" width="16" height="29" />
+      </symbol>
+      <symbol id="gs-courier-step-scan" viewBox="0 0 64 64">
+        <path d="M3 19V7H15M61 19V7H49M3 45V57H15M61 45V57H49" fill="none" stroke="#f2b640" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <use href="#gs-ghost" x="10" y="12" width="40" height="40" />
+        <use href="#gs-lantern" x="42" y="10" width="14" height="26" />
+      </symbol>
+      <symbol id="gs-courier-step-review" viewBox="0 0 64 64">
+        <use href="#gs-ghost" x="4" y="8" width="44" height="44" />
+        <use href="#gs-capsule" x="22" y="40" width="30" height="21" />
+        <circle cx="49" cy="17" r="9" fill="#f3e9d2" fill-opacity="0.25" stroke="#f2b640" stroke-width="3" />
+        <path d="M55.5 23.5L61 29" stroke="#f2b640" stroke-width="3.5" stroke-linecap="round" />
+      </symbol>
+      <symbol id="gs-courier-step-import" viewBox="0 0 64 64">
+        <use href="#gs-ghost" x="2" y="10" width="40" height="40" />
+        <use href="#gs-capsule" x="40" y="8" width="22" height="16" />
+        <path d="M51 28V42M45 37L51 44L57 37" fill="none" stroke="#f2b640" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M36 55H62V60H36z" fill="#7f3dff" stroke="#2a1a55" stroke-width="2" stroke-linejoin="round" />
+      </symbol>
+    </svg>
+    <!-- gs-sprite:end -->
     <div id="app">
       <header class="gs-header">
         <div class="gs-brand">

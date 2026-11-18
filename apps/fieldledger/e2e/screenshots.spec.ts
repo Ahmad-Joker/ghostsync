@@ -200,8 +200,12 @@ test("SHOT-FL-04: offline reload keeps the incident and shows the connection cue
     await loadUntilOfflineReady(page);
     await populate(page);
     await p.context.setOffline(true);
+    await expect(page.getByTestId("offline-banner")).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await snap(page, `local-fieldledger-offline-banner-${name}.png`, `04-banner-${name}`, false);
     await page.reload();
     await expect(page.locator("html")).toHaveAttribute("data-session", "ready");
+    await page.evaluate(() => window.scrollTo(0, 0));
     await expect(page.locator(".gs-statusbar")).toHaveAttribute("data-network", "offline");
     await expect(page.locator("#status-note")).toContainText("Offline · Changes still save on this device");
     await expect(page.locator('[data-testid="checklist"] li')).toHaveCount(3);
@@ -251,5 +255,16 @@ test("SHOT-FL-12: last control reachable above a ~100px bottom toolbar (320x568 
     expect(a.lastBottom, `${w}x${h}: last control bottom ${a.lastBottom} vs visible ${a.innerHeight}`).toBeLessThanOrEqual(a.innerHeight);
     expect(a.overflow.scroll).toBeLessThanOrEqual(a.overflow.client);
     await p.context.close();
+  }
+});
+test("SHOT-FL-13: keyboard-open captures (short visual viewport, Incident ID focused): the field and Open incident stay in view", async ({ browser }) => {
+  for (const [vp, name] of [[{ width: 390, height: 340 }, "390x340"], [{ width: 320, height: 300 }, "320x300"]] as const) {
+    const k = await newProfile(browser, { viewport: vp });
+    await holdFirstVisit(k.page);
+    await k.page.goto("/");
+    await k.page.getByLabel("Incident ID").focus();
+    await expect(k.page.getByLabel("Incident ID")).toBeInViewport();
+    await k.page.screenshot({ ...out(`local-fieldledger-first-visit-keyboard-${name}.png`), fullPage: false });
+    await k.context.close();
   }
 });

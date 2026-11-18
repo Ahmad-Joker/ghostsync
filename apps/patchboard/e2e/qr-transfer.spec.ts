@@ -81,7 +81,7 @@ test("E2E-QR-01: two offline profiles, a real canvas to the other profile's fixt
   await expect(b.page.getByTestId("qr-meta-checksum")).toHaveText(shownChecksum);
   await expect(b.page.getByTestId("qr-meta-app")).toHaveText("patchboard");
   await expect(b.page.getByTestId("qr-meta-document-id")).toHaveText("sprint-board");
-  await expect(qrBtn(b.page, "qr-import-btn")).toBeFocused();
+  await expect(b.page.getByTestId("qr-review-heading")).toBeFocused();
   expect(await trackStates(b.page)).toEqual([["ended"]]);
   expect(await videoSource(b.page)).toBe("none");
   // Nothing has been applied or stored by the scan.

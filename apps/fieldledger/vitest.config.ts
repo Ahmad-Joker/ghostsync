@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
-    exclude: ["tests/dist-scan.test.ts", "node_modules/**"],
+    exclude: ["tests/dist-scan.test.ts", "tests/dist-assets.test.ts", "node_modules/**"],
     setupFiles: ["./vitest.setup.ts"],
   },
 });

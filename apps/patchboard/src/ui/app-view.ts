@@ -15,6 +15,8 @@ import { TRANSFER_MODE_LABEL } from "../transfer/qr/transfer-mode.js";
 import { CardRow, IncompleteRow } from "./card-row.js";
 import { Guidance } from "./guidance.js";
 import { clear, h } from "./h.js";
+import { heroArt, icon } from "./icon.js";
+import { offlineBannerView } from "./offline-banner.js";
 import { connectionNote, countDiffLines, importHeadline } from "./status-text.js";
 
 /** Horizontal padding and borders of the QR panel plus its frame (see patchboard-ui.css). */
@@ -38,6 +40,18 @@ export class AppView {
   private readonly networkEl = h("span", { "data-testid": "network-chip", class: "gs-chip gs-chip--icon gs-chip--ok" });
   private readonly noticeEl = h("p", { "data-testid": "first-visit-notice", class: "gs-note" });
   private readonly noteEl = h("p", { class: "gs-status-note", id: "status-note" });
+  private readonly offlineTitle = h("p", { class: "gs-offline-title" });
+  private readonly offlineState = h("p", { class: "gs-offline-state" });
+  private readonly offlineBanner = h(
+    "div",
+    {
+      class: "gs-offline pb-offline",
+      "data-testid": "offline-banner",
+      onanimationend: () => this.offlineBanner.classList.remove("is-reacting"),
+    },
+    h("span", { class: "gs-courier-sm" }, icon("gs-courier-sm"), h("span", { class: "gs-lantern" })),
+    h("div", {}, this.offlineTitle, this.offlineState),
+  );
   private readonly guidance = new Guidance();
   private readonly bannerEl = h("div", { "data-testid": "update-banner", class: "gs-banner", hidden: true });
   private readonly updateBtn: HTMLButtonElement = h("button", { type: "button", onclick: () => void this.updateNow() }, "Update now");
@@ -57,26 +71,35 @@ export class AppView {
     private readonly c: SessionController,
     private readonly qr?: QrTransferController,
   ) {
+    // One visible readiness cue at a time: the offline indicator while online, the banner while offline.
+    // The network chip and the plain status note stay in the DOM as visually hidden text (see patchboard-ui.css).
     this.status = h(
       "section",
       { class: "status gs-statusbar", "aria-label": "Device status", "data-network": "online" },
+      h("div", { class: "pb-cue" }, h("div", { class: "pb-readiness" }, this.offlineEl), this.offlineBanner),
+      h("div", { class: "gs-chips" }, this.networkEl, this.modeEl),
       this.noteEl,
-      h("div", { class: "gs-chips" }, this.networkEl, this.modeEl, this.offlineEl),
-      this.noticeEl,
       this.bannerEl,
     );
     document.getElementById("gs-header-actions")?.append(this.guidance.helpBtn);
-    this.root.append(this.status, this.guidance.root, this.announcer, this.saveAnnouncer, this.view);
-    const net = (): void => {
+    this.root.append(this.status, this.guidance.root, h("div", { class: "pb-notices" }, this.noticeEl), this.announcer, this.saveAnnouncer, this.view);
+    const net = (react: boolean): void => {
       const online = navigator.onLine;
+      const wasOnline = this.online;
       this.networkEl.textContent = online ? "Network: online" : "Network: offline";
       this.networkEl.className = `gs-chip gs-chip--icon ${online ? "gs-chip--ok" : "gs-chip--warn"}`;
       this.online = online;
       this.renderNote();
+      // The lantern reacts once, only when the device really goes offline while the page is open.
+      this.offlineBanner.classList.remove("is-reacting");
+      if (react && wasOnline && !online) {
+        void this.offlineBanner.offsetWidth;
+        this.offlineBanner.classList.add("is-reacting");
+      }
     };
-    net();
-    window.addEventListener("online", net);
-    window.addEventListener("offline", net);
+    net(false);
+    window.addEventListener("online", () => net(false));
+    window.addEventListener("offline", () => net(true));
     this.renderOffline();
   }
 
@@ -124,6 +147,10 @@ export class AppView {
   private renderNote(): void {
     this.status.setAttribute("data-network", this.online ? "online" : "offline");
     this.noteEl.textContent = connectionNote(this.online, this.c.phase, this.c.save.state);
+    const b = offlineBannerView(this.online, this.c.phase, this.c.save.state);
+    this.offlineTitle.textContent = b.title;
+    this.offlineState.textContent = b.state;
+    this.offlineBanner.setAttribute("aria-hidden", b.visible ? "false" : "true");
   }
 
   /** Settle pending edits first; only activate the new worker when the flush succeeds. */
@@ -140,6 +167,8 @@ export class AppView {
     if (key !== this.shownKey) {
       this.shownKey = key;
       this.ws = undefined;
+      // The guide lives under the hero's "See how it works" while choosing a board, and under the status bar otherwise.
+      this.status.after(this.guidance.root);
       clear(this.view);
       this.joinInput = undefined;
       if (c.phase === "join") this.buildJoin();
@@ -167,8 +196,10 @@ export class AppView {
       type: "text",
       name: "board-id",
       autocomplete: "off",
+      autocapitalize: "none",
       spellcheck: "false",
-      "aria-describedby": "board-rules board-format board-preview board-error",
+      placeholder: "e.g. sprint-board",
+      "aria-describedby": "board-hint board-rules board-format board-preview board-error",
       oninput: () => {
         if (this.joinPreview !== undefined) this.joinPreview.textContent = previewBoardId(input.value);
       },
@@ -186,16 +217,37 @@ export class AppView {
           });
         },
       },
-      h("h2", {}, "Open a shared board"),
+      h("h2", { class: "sr-only" }, "Open a shared board"),
       h("label", { for: "board-id" }, "Board ID"),
+      h("p", { id: "board-hint", class: "gs-help-text pb-hint" }, "Use the same board ID on both devices."),
       h("div", { class: "pb-join-row" }, input, h("button", { type: "submit", class: "gs-btn--primary" }, "Open board")),
-      h("p", { id: "board-rules", class: "gs-help-text" }, "Everyone who shares this board types the same ID."),
-      h("p", { id: "board-format", class: "gs-help-text" }, BOARD_ID_RULES),
       this.joinPreview,
       this.joinError,
+      h(
+        "details",
+        { class: "gs-learn pb-rules" },
+        h("summary", {}, "What counts as a board ID"),
+        h("p", { id: "board-rules", class: "pb-rule-text" }, "Everyone who shares this board types the same ID."),
+        h("p", { id: "board-format", class: "pb-rule-text" }, BOARD_ID_RULES),
+      ),
     );
-    form.className = "pb-join";
-    this.view.append(h("section", { class: "gs-panel pb-join-panel", "aria-label": "Open a board" }, form));
+    form.className = "pb-join gs-paper gs-torn";
+    this.view.append(
+      h(
+        "section",
+        { class: "pb-hero", "aria-label": "Open a board" },
+        h("div", { class: "pb-hero-art", id: "hero-art" }, heroArt()),
+        h(
+          "div",
+          { class: "pb-hero-copy" },
+          h("h2", { class: "gs-hero-title" }, "When the signal dies, the work goes on."),
+          h("p", { class: "gs-hero-lede" }, "Edit your board offline. Share updates by QR code or file."),
+          form,
+          h("div", { class: "pb-see-how-row" }, this.guidance.seeHowBtn),
+          this.guidance.root,
+        ),
+      ),
+    );
   }
 
   private buildMessage(title: string, retry: boolean): void {
@@ -427,7 +479,7 @@ class Workspace {
       this.noticeHost,
       this.recoveryHost,
       this.mergeSummary,
-      h("section", { "aria-labelledby": "add-h", class: "gs-panel pb-add" }, h("h2", { id: "add-h" }, "Add a card"), addForm),
+      h("section", { "aria-labelledby": "add-h", class: "gs-panel gs-paper pb-add" }, h("h2", { id: "add-h" }, "Add a card"), addForm),
       h("section", { "aria-labelledby": "board-h", class: "pb-board-section" }, h("h2", { id: "board-h" }, "Board"), this.board),
       h(
         "section",

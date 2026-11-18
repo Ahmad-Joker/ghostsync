@@ -105,3 +105,19 @@ Repeat with L01 to L10 for class L.
 
 ## 10. Record the result
 Fill the results template in `.kiro/specs/qr-transfer/tasks.md` section 9 (task 9.3) and copy it into `docs/progress.md`. Until a run is filled in, the status is **EV-PHYS: NOT RUN**; the 2026-11-16 run is already recorded (PASS, user-reported). A fixture or Chromium pass is EV-UNIT or EV-FIXTURE and never replaces it.
+## 11. Re-test the redesigned build on your iPhone (Kiroween redesign)
+Status: **EV-PHYS NOT RUN** for the redesigned build. The earlier PASS (2026-11-16) applies to the previous interface only. Nothing below has been run; tick it yourself.
+- [ ] Hero: open PatchBoard fresh in Safari with the toolbars showing. Board ID field and "Open board" are visible without scrolling. The illustration does not push them down.
+- [ ] Tap the Board ID field so the keyboard opens. "Open board" can still be reached (scroll or already visible) and is not covered.
+- [ ] Safari bottom toolbar: scroll to the bottom of the workspace. The last control is not hidden behind the toolbar or the home indicator.
+- [ ] "See how it works" opens three short steps; Help is still in the header; "Built with Kiro for Kiroween" appears in Help.
+- [ ] Offline banner: turn on Airplane Mode with the board open. One banner "The network vanished. Your work didn't." appears, the lantern flickers once, then stays still; you can keep editing and the save status stays accurate. With Reduce Motion on, nothing animates.
+- [ ] Reload while offline: the board is still there and the banner shows.
+- [ ] QR sender: "Show QR code" shows the code on a plain white stage with a wide white border and nothing drawn over it (use a larger screen if the phone is too narrow; the file fallback must be easy to find).
+- [ ] Receiver: "Scan QR code (camera)" then Scan, Review, Import. After the scan you see the board name and "Import scanned capsule". After import the message says whether it saved.
+- [ ] Camera scan of the unchanged QR: repeat the section 8 attempts if you want a new PASS for this build, and record them as in section 10.
+- [ ] VoiceOver: buttons and the Board ID field read their names.
+- [ ] Mobile usability pass: after a scan is accepted, the review panel scrolls into view (smooth, or instant with Reduce Motion on) and VoiceOver or the keyboard focus is on "Capsule found. Not imported yet".
+- [ ] "Import scanned capsule" and "Discard scan" are both visible without scrolling after that automatic scroll, with the board name, the capsule size and the trust warning above them. Safari's toolbar does not cover them.
+- [ ] "Details: app, created, checksum" is closed until you open it.
+- [ ] First screen: "Open board" sits comfortably above the Safari toolbar with space below it, and "Preparing offline use" or the first-visit notice appears just below it.

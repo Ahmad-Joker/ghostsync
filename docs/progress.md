@@ -2377,3 +2377,91 @@ Outstanding checks: the redesign is NOT re-tested on Safari or a physical camera
 ### 2026-11-16 - GhostSync interface redesign: neutral "Nothing to save yet" (uncommitted at time of writing)
 - Change: the save indicator shows "Nothing to save yet" (state saved, sequence 0) in the neutral style `gs-save--neutral` instead of the green success style, in both apps (`ui/app-view.ts` tone selection and the shared `ghostsync-theme.css`, copies still identical). Green stays for a real save (sequence above 0). The full-title fallback for long checklist titles on phones is unchanged.
 - Results (real runs, exit 0): FieldLedger typecheck ok, unit 90, build ok, test:dist 4, Chromium 35 passed; PatchBoard typecheck ok, unit 218, build ok, test:dist 10, Chromium 53 passed; `git diff --check` exit 0. No test asserts the indicator colour class, and no screenshot was re-captured for this change. Safari, physical-camera and screen-reader checks remain outstanding for the redesign.
+
+## 2026-11-17 - Kiroween redesign (hero-led) (PatchBoard first, then FieldLedger; uncommitted)
+- Direction: "illustrated midnight field guide" replaces the charcoal-and-amber tool look. Ink-purple, warm paper, Kiro-inspired violet, lantern amber. Display serif only in the hero; system sans in the apps. One original ghost courier (violet lantern, sealed capsule) from a single local SVG symbol set, used in the hero (crossing between a phone and a laptop on a dotted flight path under a crescent moon), the offline banner, the "See how it works" steps and the QR Scan, Review, Import steps. Torn-paper edge on the paper panels. Spec: `.kiro/specs/kiroween-ui/{requirements,design,tasks}.md`; one "Visual identity" bullet added to `.kiro/steering/ui.md`.
+- PatchBoard: hero ("When the signal dies, the work goes on.", Board ID field with "e.g. sprint-board" and "Use the same board ID on both devices.", Open board, See how it works) beside the art on desktop and stacked on phones with Open board above the fold. Small header. Board is the centre of the workspace; Add card first; Share and Import in the board header. One compact offline banner "The network vanished. Your work didn't." driven by the real offline state, one lantern reaction, then still. QR sender on a white stage with the full quiet zone; receiver Scan, Review, Import steps driven by the real scan state; import result states whether it saved.
+- FieldLedger: same identity as the companion field notebook; checklist is the focal point, long-title fallback kept, "Nothing to save yet" stays neutral.
+- Readiness shown once: online shows the offline-ready indicator; offline shows the banner. `network-chip` and `#status-note` stay in the DOM, visually hidden. Credit "Built with Kiro for Kiroween" is in Help.
+- Not changed: `packages/`, `apps/*/src/session/`, service worker, precache plugin, QR limits, import flow. `git status` for those paths is empty; nothing staged or committed.
+
+| Check (real runs, pnpm.cmd, output captured with Out-String) | Exit | Result |
+|---|---|---|---|
+| patchboard typecheck / build | 0 / 0 | clean / ok |
+| patchboard unit (EV-UNIT) | 0 | 38 files, 273 tests (baseline 218, +55) |
+| patchboard test:dist (EV-DIST) | 0 | 14 (baseline 10, +4) |
+| patchboard Chromium full suite, 2 runs (EV-FIXTURE) | 0, 0 | 69 passed each (baseline 53, +14 E2E-KW-PB, +2 screenshot tests) |
+| fieldledger typecheck / build | 0 / 0 | clean / ok |
+| fieldledger unit (EV-UNIT) | 0 | 19 files, 137 tests (baseline 90, +47) |
+| fieldledger test:dist (EV-DIST) | 0 | 8 (baseline 4, +4) |
+| fieldledger Chromium full suite, 2 runs (EV-FIXTURE) | 0, 0 | 43 passed each (baseline 35, +8 E2E-KW-FL) |
+| qr-transfer unit | 0 | 10 files, 90 tests |
+| `git diff --check` | 0 | clean (CRLF notices only) |
+
+Evidence, kept separate: EV-UNIT (vitest, above), EV-FIXTURE (Chromium emulation of iPhone sizes 320x568, 390x664, 430x739, 430x932, keyboard emulated by a 390x340 viewport), EV-DIST (built output scans: no remote URLs, new assets in the precache list where files), EV-PHYS **NOT RUN** for this build. Browser emulation is not Safari and is not an iPhone.
+
+Contrast (computed by `tests/theme-contrast.test.ts` from the shipped theme): ink body 15.99, muted 10.76, primary button text 5.23, amber 9.90, offline banner text 12.27, focus ring 13.33 on ink; paper body 13.71, muted 6.30, focus ring 11.89, input border 5.35; chips 8.25 to 10.09 on ink and 5.46 to 7.00 on paper. The violet button against the paper panel is 4.33 (a non-text boundary; the button also has a label and a 3px focus ring).
+
+Earlier-pass tests changed (equivalent coverage kept): `apps/patchboard/e2e/screenshots.spec.ts` (viewport set, new captures), `apps/fieldledger/e2e/screenshots.spec.ts` (this step: scroll to top before the offline-reload capture and an extra offline-banner capture), `apps/*/vitest.config.ts` and `vitest.dist.config.ts` (register the new dist-assets test). No test from 4b061be or earlier was edited; no `.only`, `.skip`, retries or timeout change.
+
+Screenshots (untracked, never committed): before `.agents/tasks/ui-kiroween/before/`, after `.agents/tasks/ui-kiroween/after/`, index `.agents/tasks/ui-kiroween/index.md`. One flaky first run: FieldLedger SHOT-FL-02 failed once while both apps' capture runs ran at the same time (createDetails did not show the title); it passed on the next run and in both full suites.
+
+Outstanding (not done): real iPhone Safari rendering, toolbar and keyboard behaviour, a physical camera scan of the unchanged QR, VoiceOver. See "Re-test the redesigned build on your iPhone" in `docs/qr-physical-test.md`.
+
+## 2026-11-17 - Kiroween mobile usability pass (PatchBoard and FieldLedger; uncommitted)
+Builds on the uncommitted hero-led redesign on feat/qr-transfer (HEAD f55f359). Nothing staged or committed. Presentation, layout and focus only: no change under `packages/` or `apps/*/src/session/`, no change to import, persistence, merge, QR decode, QR limits or the service worker. Spec: REQ-KW-016 in `.kiro/specs/kiroween-ui/`.
+
+Changes:
+- After a scan is accepted, the QR view handles the controller's existing one-shot focus request. It scrolls the scan panel into view (`block: "start"`; `smooth`, or `auto` under reduced motion) and focuses the review heading "Capsule found. Not imported yet" (`h5`, `tabindex=-1`, `data-testid=qr-review-heading`). This happens once per transition into review and never on errors.
+- Review block order: board name, capsule size, the unchanged trust warning, Import scanned capsule, Discard scan. App, document, created time and checksum moved into a closed `details` named "Details: app, created, checksum". All test IDs are kept. No sticky action bar: both actions are in the first viewport at 390x664 and 320x568 after the scroll.
+- First-visit hero (both apps): the readiness line and the first-visit notice now sit below the action (same DOM and test IDs). The art is smaller on short screens, the spacing is tighter, and there is less dead space at the bottom.
+- Screenshot fixes: one-line save help no longer reserves two lines on phones (both apps); the Scan, Review, Import labels no longer wrap at 320px. Findings and before/after paths are in `.agents/tasks/ui-kiroween/mobile-pass.md`.
+- Existing test edits: three assertions that expected focus on `qr-import-btn` after a scan now expect `qr-review-heading` (`qr-transfer.spec.ts`, `qr-camera.spec.ts`, `kiroween.spec.ts`), because the requested behaviour moves focus. No pre-4b061be test changed.
+- New tests: `apps/patchboard/e2e/mobile-pass.spec.ts` (E2E-MP-PB-01..07), `apps/fieldledger/e2e/mobile-pass.spec.ts` (E2E-MP-FL-01..02), and SHOT-PB-17 in `apps/patchboard/e2e/screenshots.spec.ts`.
+
+Hero numbers (Chromium emulation, first visit): Open board bottom edge 436 at 390x664 (was ~640), 467 at 430x739, 388 at 320x568, 388 at 320x480. Open incident: 410, 439, 362, 362. Keyboard emulation at 390x340 and 320x300: the focused field is in view, the button is reachable by one scroll without covering it, and Enter opens.
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| PatchBoard typecheck / unit / build / test:dist | 0 / 0 / 0 / 0 | clean / 273 passed / built / 14 passed |
+| PatchBoard Chromium e2e, two runs | 0 / 0 | 77 / 77 passed (69 + 8 new) |
+| FieldLedger typecheck / unit / build / test:dist | 0 / 0 / 0 / 0 | clean / 137 passed / built / 8 passed |
+| FieldLedger Chromium e2e, two runs | 0 / 0 | 45 / 45 passed (43 + 2 new) |
+| packages/qr-transfer test | 0 | 90 passed |
+
+Screenshots (in `.agents/tasks/ui-kiroween/after/`, previous versions in `after-prev/`): local-patchboard-first-visit-phone-viewport.png, local-patchboard-first-visit-phone.png, local-patchboard-first-visit-keyboard-390x340.png, local-patchboard-qr-review-phone-viewport.png, local-patchboard-qr-review-320-viewport.png, local-patchboard-qr-sender-stage.png, local-patchboard-qr-sender-stage-phone.png, local-patchboard-populated-phone.png, local-patchboard-populated-desktop.png, local-fieldledger-populated-phone.png, local-fieldledger-populated-320.png, local-patchboard-first-visit-320.png, local-fieldledger-first-visit-320.png.
+
+Evidence:
+- EV-UNIT: ran (unit suites above).
+- EV-FIXTURE: ran in Chromium emulation (iPhone sizes, short viewports as keyboard stand-in, fake camera). This is NOT Safari.
+- EV-DIST: ran (test:dist above).
+- EV-PHYS: pending. Real iPhone Safari, the keyboard, the toolbars and camera testing are NOT RUN until the user tests the preview (checklist in `docs/qr-physical-test.md` section 11).
+
+### 2026-11-17 - Incident: kiroween-ui spec files deleted and reconstructed
+During the mobile pass, a PowerShell helper named `Rd` collided with the built-in `rd` alias (Remove-Item). It deleted `.kiro/specs/kiroween-ui/{requirements,design,tasks}.md` (untracked, so git had no copy) and `docs/qr-physical-test.md` (tracked, restored from HEAD and re-extended). The three spec files were rebuilt from the recorded tool calls in the session logs (`.agents/tasks/ui-kiroween/recover-specs.mjs`, `recover-finish.ps1`). They are reconstructions, not the originals. In the PR-preview prep each file got a RECONSTRUCTED banner, the AC tables were checked against the current tests and code (26 rows rewritten where the named test or observation was wrong, T4.5 ticked per `final-review.md`), and `design.md` gained a Recovery confidence table. Not recoverable: wording edited outside the recorded calls, finding-by-finding review history, per-task evidence links and unrecorded decision rationale.
+
+## 2026-11-17 - Kiroween PR-preview prep (PatchBoard and FieldLedger; uncommitted)
+Builds on the uncommitted redesign and mobile pass on feat/qr-transfer (HEAD f55f359). Nothing staged or committed by this step. No change under `packages/` or `apps/*/src/session/`, and no change to import, persistence, merge, QR decode, QR limits or the service worker.
+- Specs: `.kiro/specs/kiroween-ui/*` marked RECONSTRUCTED and checked against the code and tests (see the incident note above and the Recovery confidence section in `design.md`).
+- Visual QA of the desktop QR sender, the imported result, the keyboard-open shots and the 320px layouts. Findings and absolute paths are in `.agents/tasks/ui-kiroween/preview-qa.md`; superseded images are in `.agents/tasks/ui-kiroween/after-prev/pr-preview/`.
+- Fix: when the QR show panel is too-narrow or too-large, a `Go to file export` button under the unchanged message focuses `Export capsule (.gscap)` (PatchBoard `qr-view.ts`; test E2E-MP-PB-08).
+- Fix: with a visual viewport of 26rem or less (keyboard open), the hero supporting line is hidden and the headline is smaller, so Open board / Open incident is fully visible at 390x340 (both apps, CSS only).
+- Added SHOT-FL-13: FieldLedger keyboard-open captures at 390x340 and 320x300.
+- Narrow threshold kept. A version-18 code (568 to 658 bytes, 97 modules with the quiet zone) needs 388 CSS px at the minimum integer scale 4 (qr-transfer AC-QR-004-3). That is wider than a 390px portrait phone can give even without padding, so too-narrow at 390 is correct. Only the fallback was made easier to reach.
+- Not changed: the populated phone page height (3,789px at 390 wide). Collapsing the transfer explanations would hide guidance for little gain; left for the user's preview review.
+- FIXED (see the follow-up line below). Pre-existing intermittent failure found (not caused by the prep step): FieldLedger `renderDetails` rebuilds the "Create incident details" form on every render while the incident has no details (also at HEAD f55f359). A render between typing the title and pressing Create clears the typed title. It failed E2E-KW-FL-05 once in this step (FieldLedger e2e run 2). The same `createDetails` symptom appears in the earlier records (`final-results.md` SHOT-FL-02, `mobile-review.md` SHOT-FL-12).
+- 2026-11-18 follow-up, FieldLedger create-details input loss FIXED. Root cause: `renderDetails` cleared and rebuilt the create form (new title input and button) on every render while the incident had no details, so any render (network chip, offline banner, save state, controller notify) dropped the typed title, caret and focus. Fix (view layer only, `apps/fieldledger/src/ui/app-view.ts`): while the incident stays absent and the form is still attached, the form is reused and only the Create button's disabled state is updated; it is rebuilt only when the state changes. No controller, package, persistence, import, merge or service-worker change. Regression tests: `apps/fieldledger/e2e/input-preserved.spec.ts` (E2E-FL-INPUT-01..03: title, caret, focus and DOM node identity across an offline/online flap and a rejected-import notify, then Create works; checklist item input; incident ID field) and `apps/patchboard/e2e/input-preserved.spec.ts` (E2E-PB-INPUT-01..02: Board ID, Add card title and notes). Before the fix E2E-FL-INPUT-01 failed (the typed node was replaced, so its marker attribute was gone); after it, `--repeat-each=10` gave 30/30 passed. The FieldLedger checklist input and incident ID field and both PatchBoard forms already survived re-renders (their tests passed on unfixed code) and needed no change.
+
+| Check (pnpm.cmd, output captured with Out-String; logs in `.agents/tasks/ui-kiroween/logs/prq-*.txt`) | Exit | Result |
+| --- | --- | --- |
+| PatchBoard typecheck / unit / build / test:dist | 0 / 0 / 0 / 0 | clean / 38 files, 273 passed / built / 14 passed |
+| PatchBoard Chromium e2e, run 1 / run 2 | 0 / 0 | 78 / 78 passed (77 + E2E-MP-PB-08) |
+| FieldLedger typecheck / unit / build / test:dist | 0 / 0 / 0 / 0 | clean / 19 files, 137 passed / built / 8 passed |
+| FieldLedger Chromium e2e, run 1 / run 2 / run 3 | 0 / 1 / 0 | 46 passed / 45 passed, 1 failed (E2E-KW-FL-05, the pre-existing failure above) / 46 passed (46 = 45 + SHOT-FL-13). Run 3 is reported in addition to the failed run, not instead of it |
+| packages/qr-transfer test | 0 | 10 files, 90 passed |
+| `git diff --check` | 0 | clean (CRLF notices only) |
+Evidence:
+- EV-UNIT: ran (unit suites above).
+- EV-FIXTURE: ran in Chromium emulation (phone sizes, short viewports as a keyboard stand-in, fake camera). This is NOT Safari.
+- EV-DIST: ran (test:dist above).
+- EV-PHYS: pending. Real iPhone Safari, the toolbars, the iOS keyboard and the camera are NOT RUN until the user tests the preview (`docs/qr-physical-test.md` section 11).

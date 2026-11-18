@@ -10,6 +10,8 @@ import { metaLines } from "../transfer/capsule-meta.js";
 import { downloadBytes } from "../transfer/export.js";
 import { Guidance } from "./guidance.js";
 import { clear, h } from "./h.js";
+import { heroArt, icon } from "./icon.js";
+import { offlineBannerView } from "./offline-banner.js";
 import { connectionNote, countModelDiff, importHeadline } from "./status-text.js";
 
 const NOTICE_MIN_VISIBLE_MS = 1500;
@@ -42,6 +44,18 @@ export class AppView {
   private readonly networkEl = h("span", { "data-testid": "network-chip", class: "gs-chip gs-chip--icon gs-chip--ok" });
   private readonly noticeEl: HTMLElement =
     document.querySelector<HTMLElement>('[data-testid="first-visit-notice"]') ?? h("p", { "data-testid": "first-visit-notice", class: "gs-note" });
+  private readonly offlineTitle = h("p", { class: "gs-offline-title" });
+  private readonly offlineState = h("p", { class: "gs-offline-state" });
+  private readonly offlineBanner = h(
+    "div",
+    {
+      class: "gs-offline fl-offline",
+      "data-testid": "offline-banner",
+      onanimationend: () => this.offlineBanner.classList.remove("is-reacting"),
+    },
+    h("span", { class: "gs-courier-sm" }, icon("gs-courier-sm"), h("span", { class: "gs-lantern" })),
+    h("div", {}, this.offlineTitle, this.offlineState),
+  );
   private readonly bannerEl = h("div", { "data-testid": "update-banner", class: "gs-banner", hidden: true });
   private readonly noteEl = h("p", { class: "gs-status-note", id: "status-note" });
   private readonly guidance = new Guidance();
@@ -57,31 +71,39 @@ export class AppView {
   private online = true;
 
   constructor(private readonly root: HTMLElement, private readonly c: SessionController) {
+    // One visible readiness cue at a time: the offline indicator while online, the banner while offline.
+    // The network chip and the plain status note stay in the DOM as visually hidden text (see fieldledger.css).
     this.status = h(
       "section",
       { class: "status gs-statusbar", "aria-label": "Device status", "data-network": "online" },
-      this.noteEl,
+      h("div", { class: "fl-cue" }, h("div", { class: "fl-readiness" }, this.offlineEl), this.offlineBanner),
       h(
         "div",
         { class: "gs-chips" },
         this.networkEl,
         h("span", { "data-testid": "transfer-mode", class: "gs-chip gs-chip--icon gs-chip--info" }, "Transfer: file (.gscap)"),
-        this.offlineEl,
       ),
-      this.noticeEl,
+      this.noteEl,
       this.bannerEl,
     );
     document.getElementById("gs-header-actions")?.append(this.guidance.helpBtn);
-    this.root.append(this.status, this.announcer, this.guidance.root, this.view);
-    const net = (): void => {
+    this.root.append(this.status, this.guidance.root, h("div", { class: "fl-notices" }, this.noticeEl), this.announcer, this.view);
+    const net = (react: boolean): void => {
+      const wasOnline = this.online;
       this.online = navigator.onLine;
       this.networkEl.textContent = this.online ? "Network: online" : "Network: offline";
       this.networkEl.className = `gs-chip gs-chip--icon ${this.online ? "gs-chip--ok" : "gs-chip--warn"}`;
       this.renderNote();
+      // The lantern reacts once, only when the device really goes offline while the page is open.
+      this.offlineBanner.classList.remove("is-reacting");
+      if (react && wasOnline && !this.online) {
+        void this.offlineBanner.offsetWidth;
+        this.offlineBanner.classList.add("is-reacting");
+      }
     };
-    net();
-    window.addEventListener("online", net);
-    window.addEventListener("offline", net);
+    net(false);
+    window.addEventListener("online", () => net(false));
+    window.addEventListener("offline", () => net(true));
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") this.c.onPageHide();
     });
@@ -159,6 +181,10 @@ export class AppView {
   private renderNote(): void {
     this.status.setAttribute("data-network", this.online ? "online" : "offline");
     this.noteEl.textContent = connectionNote(this.online, this.c.phase, this.c.save.state);
+    const b = offlineBannerView(this.online, this.c.phase, this.c.save.state);
+    this.offlineTitle.textContent = b.title;
+    this.offlineState.textContent = b.state;
+    this.offlineBanner.setAttribute("aria-hidden", b.visible ? "false" : "true");
   }
 
   /** Settle pending edits first; only activate the new worker when the flush succeeds. */
@@ -176,6 +202,8 @@ export class AppView {
     if (key !== this.shownKey) {
       this.shownKey = key;
       this.ws = undefined;
+      // The guide lives under the hero's "See how it works" while choosing an incident, and under the status bar otherwise.
+      this.status.after(this.guidance.root);
       clear(this.view);
       this.joinInput = undefined;
       if (c.phase === "join") this.buildJoin();
@@ -204,8 +232,10 @@ export class AppView {
       type: "text",
       name: "incident-id",
       autocomplete: "off",
+      autocapitalize: "none",
       spellcheck: "false",
-      "aria-describedby": "incident-rules incident-format incident-preview incident-error",
+      placeholder: "e.g. pump-station-7",
+      "aria-describedby": "incident-hint incident-rules incident-format incident-preview incident-error",
       oninput: () => {
         if (this.joinPreview !== undefined) this.joinPreview.textContent = previewDocumentId(input.value);
       },
@@ -217,7 +247,7 @@ export class AppView {
     const form = h(
       "form",
       {
-        class: "gs-panel fl-join",
+        class: "fl-join gs-paper gs-torn",
         onsubmit: (e: Event) => {
           e.preventDefault();
           void this.c.open(input.value).then((ok) => {
@@ -225,15 +255,36 @@ export class AppView {
           });
         },
       },
-      h("h2", {}, "Open a shared incident"),
+      h("h2", { class: "sr-only" }, "Open a shared incident"),
       h("label", { for: "incident-id", class: "fl-label" }, "Incident ID"),
+      h("p", { id: "incident-hint", class: "gs-help-text fl-hint" }, "Use the same incident ID on both devices."),
       h("div", { class: "fl-join-row" }, input, h("button", { type: "submit", class: "gs-btn--primary" }, "Open incident")),
-      h("p", { id: "incident-rules", class: "gs-help-text" }, "Both people enter the same incident ID."),
-      h("p", { id: "incident-format", class: "gs-help-text" }, DOCUMENT_ID_RULES),
       this.joinPreview,
       this.joinError,
+      h(
+        "details",
+        { class: "gs-learn fl-rules" },
+        h("summary", {}, "What counts as an incident ID"),
+        h("p", { id: "incident-rules", class: "fl-rule-text" }, "Both people enter the same incident ID."),
+        h("p", { id: "incident-format", class: "fl-rule-text" }, DOCUMENT_ID_RULES),
+      ),
     );
-    this.view.append(form);
+    this.view.append(
+      h(
+        "section",
+        { class: "fl-hero", "aria-label": "Open an incident" },
+        h("div", { class: "fl-hero-art", id: "hero-art" }, heroArt()),
+        h(
+          "div",
+          { class: "fl-hero-copy" },
+          h("h2", { class: "gs-hero-title" }, "The checklist survives the dead zone."),
+          h("p", { class: "gs-hero-lede" }, "Open an incident, work offline, share a file."),
+          form,
+          h("div", { class: "fl-see-how-row" }, this.guidance.seeHowBtn),
+          this.guidance.root,
+        ),
+      ),
+    );
   }
 
   private buildMessage(title: string, retry: boolean): void {
@@ -284,7 +335,7 @@ class Workspace {
   private readonly alertHost = h("div");
   private readonly editErrorHost = h("div");
   private shownEditError: SessionController["editError"];
-  private readonly detailsHost = h("section", { "aria-labelledby": "details-h", class: "gs-panel fl-details" });
+  private readonly detailsHost = h("section", { "aria-labelledby": "details-h", class: "gs-panel fl-details fl-sheet" });
   private readonly listEl = h("ol", { "data-testid": "checklist" });
   private readonly invalidHost = h("div");
   private readonly importResult = h("div", { "data-testid": "import-result", role: "status", "aria-live": "polite", class: "gs-result" });
@@ -310,6 +361,7 @@ class Workspace {
   private resyncFocused = false;
   private fields: Partial<Record<keyof IncidentDetails, HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>> = {};
   private createTitle: HTMLInputElement | undefined;
+  private createBtn: HTMLButtonElement | undefined;
 
   constructor(private readonly c: SessionController, private readonly requestUpdate: () => void) {
     this.importInput = h("input", {
@@ -374,7 +426,7 @@ class Workspace {
       this.detailsHost,
       h(
         "section",
-        { class: "gs-panel fl-records", "aria-labelledby": "list-h" },
+        { class: "gs-panel gs-paper fl-records fl-notebook", "aria-labelledby": "list-h" },
         h("div", { class: "fl-records-head" }, h("h2", { id: "list-h", class: "gs-panel-title" }, "Checklist"), h("p", { class: "fl-progress" }, this.progressText, this.progressBar)),
         addForm,
         this.listEl,
@@ -603,6 +655,13 @@ class Workspace {
 
   private renderDetails(incident: NonNullable<SessionController["model"]>["incident"]): void {
     const editable = this.c.phase === "ready";
+    // The create form is built once while the incident stays absent, so a typed title and focus survive re-renders.
+    if (incident.kind === "absent" && this.createTitle?.isConnected === true && this.createBtn !== undefined) {
+      this.createBtn.disabled = !editable;
+      return;
+    }
+    this.createTitle = undefined;
+    this.createBtn = undefined;
     if (incident.kind !== "ok") {
       this.detailsBuilt = false;
       this.fields = {};
@@ -611,6 +670,8 @@ class Workspace {
       if (incident.kind === "absent") {
         this.createTitle = h("input", { id: "create-title", type: "text", maxlength: String(LIMITS.title), autocomplete: "off", "aria-describedby": "create-help" });
         const t = this.createTitle;
+        const btn = h("button", { type: "submit", class: "gs-btn--primary", disabled: !editable }, "Create incident details");
+        this.createBtn = btn;
         this.detailsHost.append(
           h(
             "form",
@@ -623,7 +684,7 @@ class Workspace {
             },
             h("p", { id: "create-help", class: "gs-help-text" }, "This incident has no details yet. Name it to start the record; you can add the location, severity and notes afterwards."),
             h("label", { for: "create-title", class: "fl-label" }, "Title"),
-            h("div", { class: "fl-add" }, t, h("button", { type: "submit", class: "gs-btn--primary", disabled: !editable }, "Create incident details")),
+            h("div", { class: "fl-add" }, t, btn),
           ),
         );
       } else {

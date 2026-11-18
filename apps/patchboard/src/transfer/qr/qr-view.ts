@@ -1,5 +1,7 @@
 import { capMetaValue } from "../capsule-meta.js";
 import { h } from "../../ui/h.js";
+import { icon, type SymbolId } from "../../ui/icon.js";
+import { qrStepsView, stepState, type StepState } from "../../ui/qr-steps.js";
 import { paintQr } from "@ghostsync/qr-transfer/browser";
 import type { QrTransferController } from "./qr-controller.js";
 import { DUPLICATE_SCOPE_NOTE, SHOW_TIP, TRUST_NOTE, type QrScanPanelState } from "./qr-errors.js";
@@ -23,6 +25,13 @@ const SCAN_STATE: Record<QrScanPanelState, { text: string; tone: "ok" | "warn" |
   "timed-out": { text: "No code found in time", tone: "warn" },
 };
 
+const STEP_STATE_TEXT: Record<StepState, string> = { pending: "Waiting", current: "Now", done: "Done", error: "Problem" };
+const STEPS: ReadonlyArray<{ n: 1 | 2 | 3; key: "scan" | "review" | "import"; label: string; symbol: SymbolId }> = [
+  { n: 1, key: "scan", label: "Scan", symbol: "gs-courier-step-scan" },
+  { n: 2, key: "review", label: "Review", symbol: "gs-courier-step-review" },
+  { n: 3, key: "import", label: "Import", symbol: "gs-courier-step-import" },
+];
+
 /** The QR transfer block. Reads all state from the controller; owns no session or capsule state. */
 export class QrView {
   readonly root: HTMLElement;
@@ -38,6 +47,7 @@ export class QrView {
   private readonly scanHint: HTMLElement;
   private readonly scanChip: HTMLElement;
   private readonly decision: HTMLElement;
+  private readonly reviewHeading: HTMLElement;
   private readonly showBytes: HTMLElement;
   private readonly showVersion: HTMLElement;
   private readonly showDoc: HTMLElement;
@@ -50,12 +60,16 @@ export class QrView {
   private readonly metaChecksum: HTMLElement;
   private readonly showBtn: HTMLButtonElement;
   private readonly hideBtn: HTMLButtonElement;
+  private readonly fileBtn: HTMLButtonElement;
   private readonly scanBtn: HTMLButtonElement;
   private readonly cancelBtn: HTMLButtonElement;
   private readonly importBtn: HTMLButtonElement;
   private readonly discardBtn: HTMLButtonElement;
   private readonly rescanBtn: HTMLButtonElement;
   private readonly scanReason: HTMLElement;
+  private readonly stepsList: HTMLElement;
+  private readonly stepItems = new Map<string, { li: HTMLElement; state: HTMLElement }>();
+  private readonly reviewBoard: HTMLElement = h("strong", { "data-testid": "qr-review-board" });
 
   constructor(
     private readonly c: QrTransferController,
@@ -75,10 +89,24 @@ export class QrView {
     this.metaApp = h("dd", { "data-testid": "qr-meta-app" });
     this.metaDoc = h("dd", { "data-testid": "qr-meta-document-id" });
     this.metaCreated = h("dd", { "data-testid": "qr-meta-created-at" });
-    this.previewBytes = h("dd", { "data-testid": "qr-preview-bytes" });
     this.metaChecksum = h("dd", { "data-testid": "qr-meta-checksum" });
     this.showBtn = h("button", { type: "button", class: "gs-btn--primary", "data-testid": "qr-show-btn", onclick: () => void this.show() }, "Show QR code");
     this.hideBtn = h("button", { type: "button", "data-testid": "qr-hide-btn", onclick: () => this.c.hideQr() }, "Hide QR code");
+    // Presentation only: when no code can be drawn, jump to the existing file export (same pattern as the Share and Import shortcuts).
+    this.fileBtn = h(
+      "button",
+      {
+        type: "button",
+        "data-testid": "qr-file-instead",
+        hidden: true,
+        onclick: () => {
+          const exp = document.getElementById("export-btn");
+          exp?.scrollIntoView({ block: "center" });
+          exp?.focus();
+        },
+      },
+      "Go to file export",
+    );
     this.scanReason = h("p", { id: "qr-scan-reason", class: "gs-help-text" });
     this.scanBtn = h(
       "button",
@@ -119,44 +147,59 @@ export class QrView {
         this.showDoc,
       ),
       this.showMessage,
+      this.fileBtn,
       this.instructions,
     );
+    // One review block: board, size, trust warning and the two actions together at the top; the rest lives under Details.
+    this.reviewHeading = h("h5", { tabindex: "-1", "data-testid": "qr-review-heading" }, "Capsule found. Not imported yet");
+    this.previewBytes = h("strong", { "data-testid": "qr-preview-bytes" });
+    this.decision = h("div", { class: "actions pb-decision-actions" }, this.importBtn, this.discardBtn);
     this.preview = h(
       "div",
-      { "data-testid": "qr-preview", class: "pb-preview" },
-      h("h5", {}, "Capsule found. Not imported yet"),
-      h("p", { class: "gs-help-text" }, "Scanning only previews this update. Nothing on your board has changed yet."),
-      h(
-        "dl",
-        {},
-        h("dt", {}, "Capsule app"),
-        this.metaApp,
-        h("dt", {}, "Document"),
-        this.metaDoc,
-        h("dt", {}, "Created"),
-        this.metaCreated,
-        h("dt", {}, "Size (bytes)"),
-        this.previewBytes,
-      ),
-      h("details", { class: "gs-learn" }, h("summary", {}, "Technical details: checksum"), h("dl", {}, h("dt", {}, "Checksum (first 12)"), this.metaChecksum)),
-    );
-    this.decision = h(
-      "div",
-      { class: "pb-decision" },
-      h("p", { class: "gs-help-text" }, "Import scanned capsule applies these changes to your board. Discard scan throws the scan away and changes nothing."),
+      { "data-testid": "qr-preview", class: "pb-preview pb-review" },
+      this.reviewHeading,
+      h("p", { class: "gs-help-text pb-review-note" }, "Scanning only previews this update. Nothing on your board has changed yet."),
+      h("p", { class: "pb-review-board" }, "Board in this capsule: ", this.reviewBoard),
+      h("p", { class: "pb-review-size" }, "Capsule size: ", this.previewBytes, " bytes"),
       h("p", { class: "gs-trust" }, "Only import capsules from people you trust: a scanned code does not prove who made it."),
-      h("div", { class: "actions" }, this.importBtn, this.discardBtn),
-    );
-    this.scanFrame = h("div", { class: "gs-scan-frame pb-scan-frame" }, this.video);
+      this.decision,
+      h("p", { class: "gs-help-text pb-review-help" }, "Import scanned capsule applies these changes to your board. Discard scan throws the scan away and changes nothing."),
+      h(
+        "details",
+        { class: "gs-learn pb-review-details" },
+        h("summary", {}, "Details: app, created, checksum"),
+        h(
+          "dl",
+          {},
+          h("dt", {}, "Capsule app"),
+          this.metaApp,
+          h("dt", {}, "Document"),
+          this.metaDoc,
+          h("dt", {}, "Created"),
+          this.metaCreated,
+          h("dt", {}, "Checksum (first 12)"),
+          this.metaChecksum,
+        ),
+        h("p", { class: "gs-help-text" }, "The checksum detects damaged data. It does not prove who created or sent the capsule."),
+      ),
+    );    this.scanFrame = h("div", { class: "gs-scan-frame pb-scan-frame" }, this.video);
+    // Presentational mirror of the controller's scan state: Scan, Review, Import. Nothing here is focusable.
+    this.stepsList = h("ol", { class: "pb-steps", "data-testid": "qr-steps", "aria-label": "Receiving steps" });
+    for (const s of STEPS) {
+      const state = h("span", { class: "pb-step-state" });
+      const li = h("li", { "data-step": s.key }, icon(s.symbol), h("span", { class: "pb-step-label" }, s.label), state);
+      this.stepItems.set(s.key, { li, state });
+      this.stepsList.append(li);
+    }
     this.scanPanel = h(
       "div",
       { "data-testid": "qr-scan-panel", class: "pb-portal-panel" },
+      this.stepsList,
       this.scanFrame,
       this.scanChip,
       this.scanMessage,
       this.scanHint,
       this.preview,
-      this.decision,
     );
 
     this.root = h(
@@ -185,6 +228,16 @@ export class QrView {
     );
   }
 
+  /**
+   * Runs once per transition into review (the controller hands out its focus request once): bring the panel into view
+   * and put keyboard focus on the review heading. Smooth scrolling only when the user has not asked for reduced motion.
+   */
+  private revealReview(): void {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.scanPanel.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+    this.reviewHeading.focus({ preventScroll: true });
+  }
+
   private async show(): Promise<void> {
     await this.c.showQr(this.availableWidth());
   }
@@ -206,9 +259,18 @@ export class QrView {
     const chip = SCAN_STATE[c.scanState];
     this.scanChip.textContent = chip.text;
     this.scanChip.className = `gs-chip gs-chip--icon gs-chip--${chip.tone}`;
+    const sv = qrStepsView(c.scanState);
+    for (const s of STEPS) {
+      const item = this.stepItems.get(s.key);
+      if (item === undefined) continue;
+      const st = stepState(sv, s.n);
+      item.li.setAttribute("data-step-state", st);
+      item.state.textContent = STEP_STATE_TEXT[st];
+    }
 
     // Show panel.
     this.hideBtn.hidden = c.showState === "idle";
+    this.fileBtn.hidden = c.showState !== "too-narrow" && c.showState !== "too-large";
     const shown = c.shown;
     if (c.showState === "ready" && shown !== undefined) {
       this.canvas.hidden = false;
@@ -247,13 +309,14 @@ export class QrView {
     if (p !== undefined) {
       this.metaApp.textContent = capMetaValue(p.metadata.app);
       this.metaDoc.textContent = capMetaValue(p.metadata.documentId);
+      this.reviewBoard.textContent = capMetaValue(p.metadata.documentId);
       this.metaCreated.textContent = capMetaValue(p.metadata.createdAt);
       this.previewBytes.textContent = String(p.bytes);
       this.metaChecksum.textContent = p.metadata.sha256.slice(0, 12);
     }
 
     const focus = c.takeFocus();
-    if (focus === "import") this.importBtn.focus();
+    if (focus === "import") this.revealReview();
     else if (focus === "scan") this.scanBtn.focus();
     else if (focus === "show") this.showBtn.focus();
   }
