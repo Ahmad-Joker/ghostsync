@@ -1,0 +1,16 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {"id": "M1", "severity": "MEDIUM", "confidence": "confirmed", "label": "Double import via second scan during pending import", "where": "design.md 8.2/8.3; requirements.md AC-QR-008-3/-4", "action": "Re-check hasAppliedQr (or record sha256 synchronously) in importScanned; define scan button behavior while importing; add unit and E2E coverage."},
+    {"id": "M2", "severity": "MEDIUM", "confidence": "confirmed", "label": "Camera leak window during engine load and video.play", "where": "design.md 7.2 steps 4-6, 7.4; AC-QR-005-4/-5; tasks.md 4.1", "action": "Record the stream before awaiting, re-check generation after loadEngine and play, add deferred-load and deferred-play unit cases."},
+    {"id": "M3", "severity": "MEDIUM", "confidence": "confirmed", "label": "Fallback ladder size classes not executable at 829 and 502 bytes", "where": "design.md 14.2/14.3; AC-QR-016-1/-3; tasks.md 9.4", "action": "Define size classes per rung and which classes must be re-run."},
+    {"id": "L1", "severity": "LOW", "label": "Physical test needs scale >= 5 but the scale rule is a SHOULD", "where": "design.md 14.1, 9.4; AC-QR-004-3"},
+    {"id": "L2", "severity": "LOW", "label": "Double-click exception in E2E-QR-05 not stated in requirements", "where": "AC-QR-013-1, NFR-QR-004, tasks.md rules"},
+    {"id": "L3", "severity": "LOW", "label": "No handling of track ended event during scan", "where": "design.md 7.1, 7.4"},
+    {"id": "L4", "severity": "LOW", "label": "Held capsule silently lost if importBytes returns early", "where": "design.md 8.3 step 3"},
+    {"id": "L5", "severity": "LOW", "label": "EV-REVIEW rows are checklists; AC-QR-010-1 row omits E2E-QR-08 for too-narrow", "where": "requirements.md section 9"},
+    {"id": "L6", "severity": "LOW", "label": "Untracked .agents/ and .review-artifacts/ appear in git status; they predate the spec (owner to confirm)", "where": "git status"},
+    {"id": "L7", "severity": "LOW", "label": "jsqr registry modified date (2025-11) differs from cited 2021-04 upload date", "where": "design.md 16, 17; requirements.md L-4"}
+  ],
+  "reviewDoc": "C:\\Users\\ahmad\\ghostsync\\.kiro\\specs\\qr-transfer\\.review\\review.md"
+}

@@ -1,0 +1,5 @@
+# Local certificates and keys never go into the repo.
+certs/
+*.pem
+*.key
+*.crt

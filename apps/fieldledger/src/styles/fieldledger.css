@@ -1,0 +1,236 @@
+/*
+ * FieldLedger layout: a field report followed by a checklist, layered on the shared GhostSync theme
+ * (loaded before this file). System fonts only. Nothing here touches outline, focus or the QR rules.
+ */
+
+/* #app is a column so the first-visit notice can sit below the hero while choosing an incident (CSS order only). */
+#app { display: flex; flex-direction: column; max-width: 56rem; margin: 0 auto; padding-bottom: calc(4rem + env(safe-area-inset-bottom)); }
+#app > * { min-width: 0; }
+#app > .gs-header, #app > .gs-statusbar, #app > .gs-guidance { flex: none; }
+.fl-notices { order: 1; }
+.fl-notices:not(:empty) > .gs-note { margin: 0 0 var(--gs-space-3); }
+#view { order: 2; }
+html[data-session="join"] .fl-notices { order: 3; margin-top: var(--gs-space-3); }
+.fl-workspace { display: grid; gap: var(--gs-space-3); min-width: 0; }
+.fl-workspace > * { margin: 0; }
+.fl-workspace > :empty { display: none; }
+.fl-label { display: block; margin: 0 0 var(--gs-space-1); font-weight: 600; }
+
+/* join and message screens */
+.fl-join { display: grid; gap: var(--gs-space-2); max-width: 38rem; margin-bottom: var(--gs-space-3); }
+.fl-join > * { margin: 0; }
+.fl-join h2 { margin-bottom: var(--gs-space-1); }
+.fl-join-row { display: flex; flex-direction: column; gap: var(--gs-space-2); }
+.fl-join-row input[type="text"] { width: 100%; }
+.fl-preview { min-height: 1.5em; font-family: var(--gs-font-mono); color: var(--gs-amber); overflow-wrap: anywhere; }
+.fl-join .error-text { min-height: 1.5em; }
+.fl-message { max-width: 38rem; }
+.fl-message > * { margin-top: 0; }
+
+/* workspace header and save status */
+.fl-command { display: grid; gap: var(--gs-space-2); }
+.fl-command > * { margin: 0; }
+.fl-command-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--gs-space-3); }
+.fl-titleblock { min-width: 0; }
+.fl-title { margin: 0; font-size: var(--gs-text-xl); font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.fl-title-label { font-size: var(--gs-text-m); font-weight: 600; color: var(--gs-text-muted); }
+.fl-meta { margin: var(--gs-space-1) 0 0; font-size: var(--gs-text-xs); color: var(--gs-text-muted); overflow-wrap: anywhere; }
+.fl-head-actions { display: flex; flex-wrap: wrap; gap: var(--gs-space-2); }
+.fl-save-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gs-space-2); }
+.fl-save-label { font-weight: 600; color: var(--gs-text-muted); }
+.fl-saved-help { min-height: 1.5rem; }
+@media (max-width: 23.99em) { .fl-saved-help { min-height: 3rem; } }
+.fl-paused { color: var(--gs-warn); }
+
+/* incident details: a field report sheet */
+.fl-details { border-top: 3px solid var(--gs-amber); }
+.fl-details .gs-panel-title { margin-bottom: var(--gs-space-3); }
+.fl-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border: 1px solid var(--gs-line); border-radius: var(--gs-radius-s); }
+.fl-field { min-width: 0; padding: var(--gs-space-3); border-top: 1px solid var(--gs-line); }
+.fl-field:first-child { border-top: 0; }
+.fl-field .fl-label { font-size: var(--gs-text-xs); letter-spacing: 0.06em; text-transform: uppercase; color: var(--gs-text-muted); }
+.fl-field input, .fl-field select, .fl-field textarea { width: 100%; }
+.fl-field--title input { font-size: var(--gs-text-l); font-weight: 700; }
+.fl-field .gs-help-text { margin: var(--gs-space-1) 0 0; font-size: var(--gs-text-xs); }
+.fl-create { display: grid; gap: var(--gs-space-2); }
+.fl-create > * { margin: 0; }
+.fl-add { display: flex; flex-wrap: wrap; gap: var(--gs-space-2); align-items: stretch; }
+.fl-add input[type="text"] { flex: 1 1 12rem; min-width: 0; }
+.fl-raw { overflow-wrap: anywhere; font-family: var(--gs-font-mono); font-size: var(--gs-text-s); }
+
+/* checklist */
+.fl-records-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--gs-space-2); margin-bottom: var(--gs-space-3); }
+.fl-records-head .gs-panel-title { margin: 0; }
+.fl-progress { display: flex; align-items: center; gap: var(--gs-space-2); margin: 0; font-weight: 600; }
+.fl-progress-bar { width: 6rem; height: 0.5rem; accent-color: var(--gs-ok); }
+.fl-add-form { display: grid; gap: var(--gs-space-1); }
+.fl-add-form > * { margin: 0; }
+[data-testid="checklist"] { display: grid; gap: var(--gs-space-2); margin: var(--gs-space-3) 0 0; padding: 0; list-style: none; }
+[data-testid="checklist"]:empty { display: none; }
+/* valid row at 320: [checkbox + state] / title field full width / (full title when long) / three equal 44px actions */
+li.fl-record {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; gap: var(--gs-space-2);
+  margin: 0; padding: var(--gs-space-3);
+  background: var(--gs-sunken); border: 1px solid var(--gs-line); border-left: 6px solid var(--gs-line-strong); border-radius: var(--gs-radius-m);
+}
+li.fl-record:not(.invalid) > input[type="checkbox"] { grid-column: 1; grid-row: 1; justify-self: start; }
+li.fl-record:not(.invalid) > .fl-record-state { grid-column: 2 / -1; grid-row: 1; justify-self: start; }
+li.fl-record:not(.invalid) > input[type="text"] { grid-column: 1 / -1; grid-row: 2; width: 100%; min-width: 0; font-size: var(--gs-text-m); }
+li.fl-record:not(.invalid) > .fl-record-full { grid-column: 1 / -1; grid-row: 3; display: none; margin: 0; color: var(--gs-text); overflow-wrap: anywhere; }
+li.fl-record[data-length="long"] > .fl-record-full, li.fl-record[data-length="xlong"] > .fl-record-full { display: block; }
+li.fl-record:not(.invalid) > button {
+  grid-row: 4; align-self: stretch; min-width: 0; padding-inline: 0.25rem;
+  font-size: var(--gs-text-s); line-height: 1.2; overflow-wrap: anywhere;
+}
+li.fl-record[data-done="true"] { border-left-color: var(--gs-ok); }
+li.fl-record.invalid { display: flex; flex-wrap: wrap; align-items: center; border-left-color: var(--gs-warn); }
+li.fl-record > strong { color: var(--gs-warn); }
+.invalid-preview { overflow-wrap: anywhere; font-family: var(--gs-font-mono); font-size: var(--gs-text-s); }
+.fl-invalid-help { flex: 1 1 100%; margin: 0; }
+.fl-record-state { display: inline-flex; align-items: center; gap: 0.35rem; font-size: var(--gs-text-s); font-weight: 700; color: var(--gs-text-muted); }
+.fl-record-state::before { content: "\25CB"; content: "\25CB" / ""; }
+li.fl-record[data-done="true"] > .fl-record-state { color: var(--gs-ok); }
+li.fl-record[data-done="true"] > .fl-record-state::before { content: "\2713"; content: "\2713" / ""; }
+.fl-empty { margin: var(--gs-space-3) 0 0; padding: var(--gs-space-3); color: var(--gs-text-muted); border: 1px dashed var(--gs-line-strong); border-radius: var(--gs-radius-s); }
+
+/* transfer */
+.fl-transfer > p { margin: var(--gs-space-2) 0 0; }
+.fl-transfer .gs-transfer-group input[type="file"] { width: 100%; }
+.fl-transfer .gs-transfer-group label { margin: 0; }
+.fl-transfer .gs-learn { margin-top: var(--gs-space-3); }
+[data-testid="import-result"]:empty, [data-testid="merge-summary"]:empty { display: none; }
+[data-testid="import-result"] dl, [data-testid="merge-summary"] dl { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.1rem; margin: var(--gs-space-2) 0; }
+[data-testid="import-result"] dt { color: var(--gs-text-muted); font-size: var(--gs-text-xs); }
+[data-testid="import-result"] dd { margin: 0 0 var(--gs-space-2); font-family: var(--gs-font-mono); font-size: var(--gs-text-s); overflow-wrap: anywhere; }
+[data-testid="import-stale-notice"] { padding: var(--gs-space-3); border: 1px solid var(--gs-warn); border-radius: var(--gs-radius-s); }
+
+@media (min-width: 30em) {
+  .fl-join-row { flex-direction: row; align-items: stretch; }
+  .fl-join-row input[type="text"] { flex: 1 1 auto; }
+  .fl-join-row button { flex: none; white-space: nowrap; }
+}
+@media (min-width: 40em) {
+  .fl-saved-help { min-height: 1.5rem; }
+  .fl-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .fl-field { border-top: 0; border-left: 1px solid var(--gs-line); }
+  .fl-field--title, .fl-field--notes { grid-column: 1 / -1; border-left: 0; }
+  .fl-field--title { border-bottom: 1px solid var(--gs-line); }
+  .fl-field--notes { border-top: 1px solid var(--gs-line); }
+  .fl-field--location { border-left: 0; }
+}
+@media (min-width: 48em) {
+  li.fl-record { grid-template-columns: 2.75rem minmax(0, 1fr) auto auto auto auto; }
+  li.fl-record:not(.invalid) > input[type="checkbox"] { grid-column: 1; grid-row: 1; }
+  li.fl-record:not(.invalid) > input[type="text"] { grid-column: 2; grid-row: 1; }
+  li.fl-record:not(.invalid) > .fl-record-state { grid-column: 3; grid-row: 1; min-width: 5.5rem; }
+  li.fl-record:not(.invalid) > .fl-record-full { grid-row: 2; }
+  li.fl-record[data-length="long"] > .fl-record-full { display: none; }
+  li.fl-record[data-length="xlong"] > .fl-record-full { display: block; }
+  li.fl-record:not(.invalid) > button { grid-row: 1; padding-inline: 0.9rem; font-size: inherit; }
+  li.fl-record:not(.invalid) > button:nth-of-type(1) { grid-column: 4; }
+  li.fl-record:not(.invalid) > button:nth-of-type(2) { grid-column: 5; }
+  li.fl-record:not(.invalid) > button:nth-of-type(3) { grid-column: 6; }
+}
+
+/* ---------- Status bar: one visible readiness cue ---------- */
+/* Online: the offline indicator is the cue. Offline: the banner is the cue. The network chip and the plain status
+   note stay in the DOM as visually hidden text. The banner's slot is always reserved, so nothing moves. */
+.gs-statusbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gs-space-1) var(--gs-space-3); margin: 0 0 var(--gs-space-3); padding: 0; background: none; border: 0; border-radius: 0; }
+.gs-statusbar[data-network="offline"] { background: none; }
+.fl-cue { display: grid; flex: 1 1 16rem; min-width: 0; }
+.fl-cue > * { grid-area: 1 / 1; min-width: 0; align-self: center; }
+.fl-readiness .gs-chip { font-size: var(--gs-text-s); }
+.fl-offline { min-height: 4.75rem; }
+.gs-statusbar[data-network="online"] .fl-offline { visibility: hidden; }
+.gs-statusbar[data-network="offline"] [data-testid="offline-indicator"],
+[data-testid="network-chip"], .gs-statusbar .gs-status-note {
+  position: absolute; display: block; width: 1px; height: 1px; min-height: 0; margin: 0; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+.gs-statusbar .gs-status-note::before { display: none; }
+.gs-statusbar > .gs-chips { margin-left: auto; }
+.gs-statusbar > .gs-banner { flex: 1 1 100%; }
+@media (min-width: 30em) {
+  .fl-offline { min-height: 3.5rem; }
+}
+
+/* ---------- Hero (incident chooser): the field notebook cover ---------- */
+.fl-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gs-space-3); align-items: center; }
+.fl-hero-art { width: 100%; max-width: 30rem; margin: 0 auto; pointer-events: none; }
+.fl-hero-art .gs-art { width: 100%; height: clamp(4rem, 11vh, 8rem); height: clamp(4rem, 11dvh, 8rem); }
+.fl-hero-copy { display: grid; gap: var(--gs-space-3); align-content: start; min-width: 0; }
+.fl-hero-copy > * { margin: 0; }
+.fl-join { max-width: none; margin: 0; padding: var(--gs-space-4) var(--gs-space-4) 1.75rem; border-radius: var(--gs-radius-m); }
+.fl-hint { margin: 0; }
+.fl-rules { background: transparent; border-color: var(--gs-line); }
+.fl-rule-text { margin: var(--gs-space-1) 0 0; font-size: var(--gs-text-s); }
+.fl-see-how-row { display: flex; }
+.fl-see-how { border-color: var(--gs-violet-soft); }
+.fl-hero-copy > .gs-guidance { margin: 0; }
+.fl-join .error-text:empty { display: none; }
+.fl-join .error-text { min-height: 0; }
+.fl-message .gs-hero-title { margin: 0; }
+@media (max-height: 36rem) {
+  .fl-hero-art { display: none; }
+}
+/* Phone first visit: the action comes first. The readiness line and the one-online-visit notice sit just below it. */
+html[data-session="join"] .gs-statusbar { order: 4; margin: var(--gs-space-2) 0 0; }
+html[data-session="join"] .fl-notices { margin-top: var(--gs-space-2); }
+html[data-session="join"] #app { padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
+html[data-session="join"] .fl-offline .gs-chip, html[data-session="join"] .fl-notices .gs-note { font-size: var(--gs-text-xs); }
+html[data-session="join"] .fl-notices .gs-note { padding: var(--gs-space-1) var(--gs-space-3); }
+html[data-session="join"] .gs-statusbar .fl-offline { display: none; }
+html[data-session="join"] .gs-statusbar[data-network="offline"] .fl-offline { display: grid; }
+html[data-session="join"] .gs-header { margin-bottom: var(--gs-space-2); padding-bottom: var(--gs-space-2); }
+@media (max-width: 55.99em) {
+  .fl-hero, .fl-hero-copy { gap: var(--gs-space-2); }
+  .fl-hero-art .gs-art { height: clamp(4rem, 11dvh, 6.5rem); }
+  .gs-hero-title { font-size: clamp(1.625rem, 7vw, 2.25rem); }
+  .fl-join { gap: var(--gs-space-1); padding: var(--gs-space-3) var(--gs-space-3) 1.25rem; }
+  #incident-preview:empty { display: none; }
+}
+/* Keyboard open or landscape phone (visual viewport 26rem / 416px or less): the headline and the form get the room; the lede repeats the hint. */
+@media (max-height: 26rem) {
+  .gs-hero-lede { display: none; }
+  .gs-hero-title { font-size: 1.375rem; }
+  .fl-hero, .fl-hero-copy { gap: var(--gs-space-1); }
+  html[data-session="join"] .gs-header { margin-bottom: var(--gs-space-1); }
+}
+@media (max-width: 55.99em) and (max-height: 700px) {
+  .fl-hero-art .gs-art { height: 5rem; }
+  .gs-hero-lede { font-size: var(--gs-text-s); }
+}@media (min-width: 56em) {
+  .fl-hero { grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: 3rem; padding-top: var(--gs-space-4); }
+  .fl-hero-copy { grid-column: 1; grid-row: 1; }
+  .fl-hero-art { grid-column: 2; grid-row: 1; max-width: none; background: radial-gradient(ellipse at 50% 55%, rgba(127, 61, 255, 0.32), rgba(127, 61, 255, 0) 68%); }
+  .fl-hero-art .gs-art { height: auto; }
+}
+
+/* ---------- Field-report header: compact ---------- */
+.fl-command { padding: var(--gs-space-3); border-top: 4px solid var(--gs-amber); }
+.fl-save-help { min-height: 0; }
+.fl-head-actions .gs-btn--quiet { border-color: var(--gs-violet-soft); }
+.fl-sheet { padding: var(--gs-space-3); }
+.fl-sheet .gs-panel-title { margin-bottom: var(--gs-space-2); font-size: var(--gs-text-m); color: var(--gs-text-muted); }
+.fl-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fl-field { padding: var(--gs-space-2) var(--gs-space-3); }
+.fl-field--title, .fl-field--location, .fl-field--notes { grid-column: 1 / -1; }
+.fl-field:nth-child(n+3) { border-top: 1px solid var(--gs-line); }
+.fl-field:nth-child(4) { border-left: 1px solid var(--gs-line); }
+.fl-field:first-child { border-top: 0; }
+.fl-field .gs-help-text { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.fl-field--title input { font-size: var(--gs-text-m); }
+
+/* ---------- Checklist: a paper notebook, the focal point ---------- */
+.fl-notebook { padding: var(--gs-space-4) var(--gs-space-3); border-left: 4px solid var(--gs-bad-line); }
+.fl-notebook .fl-records-head .gs-panel-title { font-size: var(--gs-text-xl); font-weight: 700; }
+.fl-notebook [data-testid="checklist"] { gap: 0; margin-top: var(--gs-space-3); border-top: 1px solid var(--gs-line-strong); }
+.fl-notebook li.fl-record { background: transparent; border: 0; border-bottom: 1px solid var(--gs-line-strong); border-left: 6px solid transparent; border-radius: 0; padding: var(--gs-space-3) var(--gs-space-2); }
+.fl-notebook li.fl-record[data-done="true"] { background: var(--gs-ok-bg); border-left-color: var(--gs-ok); }
+.fl-notebook li.fl-record.invalid { border-left-color: var(--gs-warn); }
+.fl-notebook li.fl-record[data-done="true"] > input[type="text"] { text-decoration: line-through; text-decoration-thickness: 2px; color: var(--gs-text-muted); }
+.fl-notebook li.fl-record[data-done="true"] > .fl-record-full { text-decoration: line-through; color: var(--gs-text-muted); }
+.fl-notebook .fl-record-state { padding: 0.125rem 0.625rem; border: 1px solid var(--gs-line-strong); border-radius: 999px; }
+.fl-notebook li.fl-record[data-done="true"] > .fl-record-state { border-color: var(--gs-ok); }
+.fl-notebook .fl-empty { background: transparent; }
+.fl-notebook .fl-progress-bar { accent-color: var(--gs-primary); }

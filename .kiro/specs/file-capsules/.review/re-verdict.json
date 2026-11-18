@@ -1,0 +1,32 @@
+{
+  "verdict": "APPROVED",
+  "findings": [
+    {
+      "id": "NIT-5",
+      "severity": "NIT",
+      "title": "Covered-region bullet list does not restate the sha256 placeholder neutralization",
+      "where": "design.md Checksum coverage (region enumeration)",
+      "fix": "Append to the coverage list: '(the sha256 field's 64 bytes are the \"0\".repeat(64) placeholder during both encode-time and verify-time hashing; see the Canonical hashing rule)' so the covered-region definition and the placeholder rule sit together."
+    },
+    {
+      "id": "NIT-6",
+      "severity": "NIT",
+      "title": "Verify step locates the sha256 span via a '64-byte lowercase-hex run' rather than strictly by the JSON key",
+      "where": "design.md Checksum Verify step (1)",
+      "fix": "Reword to 'locate the value span bound to the top-level JSON key sha256 (position derivable from the parsed key's offset in the raw metadata bytes; uniqueness guaranteed by the duplicate-key rejection)' so the span is defined by the key, not a hex-run heuristic."
+    }
+  ],
+  "priorFindings": [
+    { "id": "HIGH-1", "status": "Closed" },
+    { "id": "MEDIUM-1", "status": "Closed" },
+    { "id": "MEDIUM-2", "status": "Closed" },
+    { "id": "MEDIUM-3", "status": "Closed" },
+    { "id": "NIT-1", "status": "Closed" },
+    { "id": "NIT-2", "status": "Closed" },
+    { "id": "NIT-3", "status": "Closed" },
+    { "id": "NIT-4", "status": "Closed" },
+    { "id": "ASYNC-CONTRACT", "status": "Closed" },
+    { "id": "CHECKSUM-AMBIGUITY", "status": "Closed" }
+  ],
+  "reviewDoc": "C:\\Users\\ahmad\\ghostsync\\.kiro\\specs\\file-capsules\\.review\\re-review.md"
+}

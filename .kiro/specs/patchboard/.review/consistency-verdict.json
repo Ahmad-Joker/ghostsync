@@ -1,0 +1,16 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {"severity": "MEDIUM", "id": "M1", "file": "requirements.md", "section": "AC-PB-017-1 and section 9 row", "summary": "MUST claims every action is keyboard-operable but named tests (E2E-PB-03/04/05) do not cover restore, discard, change board, update; E2E-PB-08/12/15 use pointer clicks.", "correction": "Require keyboard activation in E2E-PB-08/12/15 and list them, or narrow the AC."},
+    {"severity": "MEDIUM", "id": "M2", "file": "design.md; tasks.md", "section": "13.5 E2E-PB-03; task 4.4", "summary": "AC-PB-006-8 (draft survives refresh) has an observation in requirements section 9 but no scenario step or capsule source in design or tasks.", "correction": "Add an explicit E2E-PB-03 step (open form, type draft, import a capsule changing another card, assert draft and focus) or a view-level unit test."},
+    {"severity": "MEDIUM", "id": "M3", "file": "design.md", "section": "13.5 E2E-PB-11; AC-PB-010-3", "summary": "Blocked precache asset relies on context.route, which may not intercept service-worker fetches; unproven in this repo (FieldLedger dropped its failing worker).", "correction": "Specify a deterministic fallback such as a test-only static-server switch returning 404/500 for one precached URL."},
+    {"severity": "MEDIUM", "id": "M4", "file": "design.md", "section": "13.3 stale-move detection; AC-PB-021-2", "summary": "moveCard takes no snapshot, so STALE-FIX-1 never feeds a stale model to production code; the E2E test passes for a naive writer. Controller-level staleness is untested.", "correction": "Add a controller test with a failed refresh (stale this.model), store edits behind it, then move/reorder/saveCard asserting written set equals the expected fields."},
+    {"severity": "LOW", "id": "L1", "file": "design.md", "section": "13.5 E2E-PB-08", "summary": "card-ok1 placement unstated though the todo|00002048 literal depends on it; Discard sequence vague."},
+    {"severity": "LOW", "id": "L2", "file": "design.md; requirements.md", "section": "9.1 vs AC-PB-006-7/016-3", "summary": "Restore/Discard accessible names differ (Restore card <id> vs Restore)."},
+    {"severity": "LOW", "id": "L3", "file": "tasks.md", "section": "7 requirement-to-task table", "summary": "Table omits Playwright tasks 4.x and task 2.10 for U-PB-09."},
+    {"severity": "LOW", "id": "L4", "file": "requirements.md", "section": "AC-PB-006-3/006-4/021-1 vs L-7", "summary": "Exactly-one-field claim is false for records with unknown extra fields, which put deletes."},
+    {"severity": "LOW", "id": "L5", "file": "requirements.md", "section": "AC-PB-004-6 and other additions", "summary": "Disclosed beyond-brief additions (500-card MUST, last board, sub-path, inline confirm, Save card); confirm the 500-card MUST is wanted."},
+    {"severity": "LOW", "id": "L6", "file": "docs/progress.md", "section": "PatchBoard planning entry", "summary": "Wording 'proves detection' should be 'is planned to detect'."}
+  ],
+  "reviewDoc": "C:\\Users\\ahmad\\ghostsync\\.kiro\\specs\\patchboard\\.review\\consistency-review.md"
+}

@@ -1,0 +1,9 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    { "id": "F1", "severity": "MEDIUM", "title": "AC-CAP-006-1 says every rejection is a CapsuleError, contradicting AC-CAP-006-4 / per-function table (TypeError for programmer errors, incl. new encode documentId mismatch)", "where": "requirements.md Error contract AC-CAP-006-1" },
+    { "id": "F2", "severity": "NIT", "title": "buffer-ownership.test.ts referenced in tasks traceability, requirements NFR-CAP-003 and design layout but defined by no task; duplicates snapshot-ownership.test.ts", "where": "tasks.md traceability table; requirements.md; design.md layout" },
+    { "id": "F3", "severity": "NIT", "title": "Merged-size test assertion '2048 > 1024 - S1' is vacuous; assert post-import merged snapshot size > 1024 instead", "where": "tasks.md 6.4(c); design.md merged-size scenario step 3" }
+  ],
+  "reviewDoc": "C:\\Users\\ahmad\\ghostsync\\.kiro\\specs\\file-capsules\\.review\\correction-4-review.md"
+}

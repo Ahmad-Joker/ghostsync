@@ -2,8 +2,8 @@
 
 ## Git setup
 
-- Branch: `main` (verified with `git branch --show-current`).
-- Commits: none — the repository has no commits on `main` yet.
+- Branch: `feat/sdk-foundation` (current working branch; verified with `git branch --show-current`). History: the scaffold was committed on `main` as `c78e6f7`; the `feat/kiro-steering` branch (steering + core-sync-proof) was committed as `ab37419`; `feat/sdk-foundation` was cut from `ab37419` for the SDK foundation planning that follows.
+- Current HEAD: `ab37419` (core synchronization proof + Kiro specs). Scaffold commit: `c78e6f7` (published). The section headers below retain the branch each milestone was actually performed on.
 - Origin remote: `https://github.com/Ahmad-Joker/ghostsync.git` (fetch/push). Git remotes were not modified in this step.
 - Node.js: `v24.14.0` (verified with `node --version`).
 - pnpm: `10.34.9` (verified with `pnpm.cmd --version`).
@@ -78,6 +78,17 @@ Exit code: `0`
 
 Exit code: `0`
 
+## Steering
+
+Workspace steering added on branch `feat/kiro-steering` (base commit `c78e6f7`):
+
+- `.kiro/steering/product.md` — inclusion: always
+- `.kiro/steering/architecture.md` — inclusion: always
+- `.kiro/steering/coding.md` — inclusion: always
+- `.kiro/steering/testing.md` — inclusion: always
+- `.kiro/steering/security.md` — inclusion: always
+- `.kiro/steering/ui.md` — inclusion: fileMatch, fileMatchPattern: "apps/**/*"
+
 ## Product features
 
 - Offline sync SDK engine (`@ghostsync/kit`) — Planned. Nothing implemented in this scaffold step.
@@ -85,6 +96,2372 @@ Exit code: `0`
 - PatchBoard example app (`@ghostsync/patchboard`) — Planned. Nothing implemented in this scaffold step.
 - GhostSync Studio inspector UI (`@ghostsync/studio`) — Planned. Nothing implemented in this scaffold step.
 
-## Next action
+## core-sync-proof spec planning (feat/kiro-steering)
 
-Commit the verified scaffold, then create Kiro steering and specs before implementing sync primitives.
+Requirements-First Feature Spec `core-sync-proof` progressed through planning. No code, dependencies, builds, tests, commits, or pushes were performed in this step; only Markdown spec documents changed.
+
+- `requirements.md` revised per the approved direction: preserved stable requirement IDs (REQ-001..REQ-006) and existing acceptance-criterion IDs, applied the 9 corrections in place, added new AC IDs for new cases (AC-002-4, AC-002-5, AC-005-3, AC-006-4) and a new scenario S-004c and S-006, replaced the "Open questions" section with a "Resolved decisions" section stating the seven resolved decisions, and added a "Definitions" section fixing deep equality / observable state / update carrier.
+- `design.md` drafted: small public API, scalar domain, plain-JSON state projection with deep equality, update carrier (documentId + Uint8Array), full-state export (`Y.encodeStateAsUpdate` no state vector) distinct from future differential updates, restore lifecycle (fresh Y.Doc + fresh clientID, documentId preserved separately), distinguishable rejection/error behavior, shared seeding / independent replica state / cleanup, edge cases, invariants and owning layers, a mapping of every acceptance criterion (AC-001-1 through AC-006-4) to a concrete test, strict TypeScript + Vitest + fast-check proposal with reproducible seeds and nonempty generated cases, and a description (not implementation) of future storage/transport/capsule integration.
+- `tasks.md` drafted: short ordered checklist (tooling, API, sync, restore, validation, tests, final verification), each task linked to requirement IDs, exact proposed PowerShell commands for typecheck/tests/build (not executed), every implementation task marked pending.
+- Coverage checked: every acceptance criterion maps to a concrete test in `design.md` and to a task in `tasks.md`; no gaps found.
+
+Resolved decisions applied across all three spec docs: (1) Node.js proof with independent in-memory `Y.Doc` instances; (2) one top-level `Y.Map` with string keys and scalar values (string, finite number, boolean, null); (3) caller-supplied logical documentId carried alongside the update `Uint8Array`; (4) full-state exports via `Y.encodeStateAsUpdate(doc)` with no state vector; (5) observable state = the map's plain JSON projection compared by deep equality; (6) native Yjs conflict resolution, no custom timestamp ordering; (7) restore into a fresh `Y.Doc` with a fresh session clientID, preserving the logical documentId separately.
+
+## Spec review status
+
+- `.kiro/specs/core-sync-proof/requirements.md` — corrected and implemented (six design/task corrections applied; REQ-007 and AC-002-6 / S-007 added).
+- `.kiro/specs/core-sync-proof/design.md` — corrected and implemented (null-prototype projection, `unknown` apply boundary, fast-check `seed`/`numRuns`, behavioral AC-006-3, lifecycle rows, deletion-regression row, `tsconfig.build.json`).
+- `.kiro/specs/core-sync-proof/tasks.md` — converted to standard Markdown checkboxes; completed + verified tasks marked `- [x]`.
+
+## core-sync-proof implementation (feat/kiro-steering)
+
+This is a **Node in-memory proof** of the Kit's CRDT sync foundation. It is distinct from future
+browser/offline-persistence work (IndexedDB) and from transport (file/QR). Those remain unbuilt.
+
+### Six design/task corrections applied (spec docs + code)
+
+1. Browser-compatible SDK — no `node:util` / Node-only imports in `src`; the runtime `deepEqualState`
+   helper was dropped; deep-equality is a test concern (`expect(...).toEqual(...)`).
+2. Correct property-test config — `fc.configureGlobal({ numRuns: 200, seed: 424242 })` (supported
+   option names; no `baseSeed`); `fc.check` + explicit Vitest failure reporting seed/numRuns/numSkips/
+   numShrinks/counterexample/counterexamplePath; bounded nonempty `fc.uniqueArray` with distinct keys;
+   AC-006-3 is a real behavioral test (no source-comment grep).
+3. Empty payloads — zero-length `bytes` rejected as `invalidCarrier` before decode; an empty-doc
+   full-state export is non-empty and imports to `{}`; `new Uint8Array(0)` is not treated as a no-op.
+4. Safe state projection — `getState()` returns a fresh null-prototype snapshot with `__proto__`,
+   `constructor`, `toString` as own data properties; snapshot mutation cannot mutate the replica.
+5. Validation and lifecycle — `set` rejects undefined/array/object/function/symbol/bigint/NaN/±Infinity
+   before mutating; `applyUpdate(carrier: unknown)` checks the carrier shape before reading fields;
+   nonempty `documentId` enforced; after `destroy()` every other op throws `Error("replica has been
+   destroyed")`; repeated `destroy()` is a safe no-op.
+6. Deletion regression — set→sync→delete→sync removes the key on the peer; restoring the deleted state
+   into a fresh replica and replaying the OLDER pre-deletion update does not resurrect the key.
+
+### Changed files
+
+- `packages/kit/package.json` — ESM entry (`type:module`, `exports`, `main`/`module`/`types`,
+  `files:["dist"]`); scripts `typecheck`/`test`/`build`; dep `yjs@13.6.33`; dev `@types/node@24.19.2`,
+  `fast-check@4.10.2`, `typescript@7.0.2`, `vitest@5.1.0` (all exact pins).
+- `packages/kit/tsconfig.json` (new) — strict, `NodeNext`, `lib ES2022` (no DOM), `types node`,
+  `declaration`, includes `src` + `tests` + config.
+- `packages/kit/tsconfig.build.json` (new) — extends base; `src`-only emit to `dist/`; tests/config excluded.
+- `packages/kit/vitest.config.ts` (new) + `packages/kit/vitest.setup.ts` (new) — node env; fast-check
+  global `numRuns: 200`, `seed: 424242`.
+- `packages/kit/src/types.ts` (new) — `Scalar`, `State`, `UpdateCarrier`, `ApplyOutcome`, `Replica`
+  (`applyUpdate(unknown)`), `Kit`.
+- `packages/kit/src/scalars.ts` (new) — `assertScalar` runtime guard.
+- `packages/kit/src/state.ts` (new) — pure null-prototype `project(map)`.
+- `packages/kit/src/replica.ts` (new) — `createKit`, `ReplicaImpl`, carrier validation, `assertAlive`.
+- `packages/kit/src/index.ts` (new) — public re-exports.
+- `packages/kit/tests/*.test.ts` — 10 unit files + 3 property files (34 tests total).
+- `pnpm-lock.yaml` — regenerated by pnpm (1 file changed, 892 insertions).
+- `.kiro/specs/core-sync-proof/{requirements,design,tasks}.md` — corrected.
+- `docs/progress.md` — this section.
+- `.agents/tasks/core-sync-proof/verification.md` — machine-readable verification record.
+
+### Verification commands and results (Windows PowerShell, from workspace root)
+
+| Command | Exit code | Result |
+| --- | --- | --- |
+| `pnpm.cmd install` | 0 | regenerated lockfile (+44 packages) |
+| `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date / already up to date |
+| `pnpm.cmd -F @ghostsync/kit typecheck` | 0 | strict typecheck clean (src + tests + config) |
+| `pnpm.cmd -F @ghostsync/kit test` | 0 | 13 files / 34 tests passed, 0 failed |
+| `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emitted src-only (`.js` + `.d.ts`), no test files |
+| smoke check (`node dist/index.js` entry) | 0 | PASS — two replicas, disjoint edits, two-way exchange, both contain both edits |
+
+Property runs: seed **424242**, **200** numRuns completed per property, `result.failed === false`
+for all three property files (no skips/shrinks surfaced).
+
+Dependency versions installed: `yjs@13.6.33`, `@types/node@24.19.2`, `fast-check@4.10.2`,
+`typescript@7.0.2`, `vitest@5.1.0`.
+
+### Known limitations (deferred)
+
+- Malformed/hostile Yjs bytes beyond basic carrier validation are not handled (a well-formed carrier
+  with corrupt bytes can still throw inside `Y.applyUpdate`).
+- No payload size bounds, capsule versioning, or checksums. A checksum detects corruption; it does not
+  authenticate the sender.
+- No capsule codec, QR transfer, IndexedDB/browser storage, or app screens.
+- Node in-memory proof only; browser/offline-persistence is separate future work (REQ-005's
+  export-then-restore is the in-memory surrogate for "persistence after reload").
+
+## core-sync-proof — review-finding corrections (test-only, feat/kiro-steering)
+
+This is a **TEST-ONLY** correction pass on top of the Node in-memory proof above. No `src`,
+app packages, steering, dependency versions, `package.json`, or `pnpm-lock.yaml` were changed.
+Still a Node in-memory proof — distinct from future browser/offline-persistence (IndexedDB) and
+transport (file/QR) work, which remain unbuilt.
+
+### Review findings addressed
+
+The prior review (`.agents/tasks/core-sync-proof/review.json`, verdict APPROVED) raised two
+informational no-action items (corrupt-bytes passthrough deferred to the capsule tier; the
+`typescript@7.0.2` native-compiler pin). This pass additionally applies the required test-side
+corrections from the follow-up task:
+
+1. **`sync.property.test.ts` disjointness.** Previously A used unrestricted keys while only B was
+   prefixed (`B::`), so A could also generate a `B::...` key and the key sets were not guaranteed
+   disjoint. Fixed to consistent separate namespaces: A writes ONLY `A::`-prefixed keys and B writes
+   ONLY `B::`-prefixed keys, for both the writes and the assertions. Added a DETERMINISTIC case using
+   raw keys (A writes `B::x`, B writes `x`) that maps to distinct keys (`A::B::x`, `B::x`) and asserts
+   both edits survive with nothing colliding. All generated arrays bounded (`maxLength: 16`).
+2. **Actual fast-check metrics for every property.** New shared helper `tests/fc-report.ts` prints,
+   for EACH property regardless of outcome, the property name and the real `RunDetails` fields
+   (`seed`, `numRuns`, `numSkips`, `numShrinks`, pass/fail) via `process.stdout.write` (not captured
+   by Vitest console interception). On failure it surfaces the ORIGINAL error, the counterexample,
+   and the replay path (seed + counterexamplePath) without swallowing or replacing them. Metrics come
+   from the real result object, not constants. Seed 424242 / 200 runs preserved.
+3. **Strengthened merge-invariant coverage.** New `tests/merge-invariant.property.test.ts`:
+   update histories from TWO independent source replicas over a small key space (so repeated writes
+   to the SAME key and set-then-delete sequences occur), captured update bytes delivered to FRESH
+   receivers in (a) original order, (b) a generated permutation, (c) with duplicate deliveries, and
+   (d) a single `Y.mergeUpdates` batch; every valid apply asserted `ok === true`; convergence asserted
+   against a DIRECT Yjs reference `Y.Doc` that received those exact bytes (wrapper state compared to
+   the reference doc's projection, not only wrapper-to-wrapper); a deterministic deletion regression
+   (older pre-deletion update delivered after a newer deletion does NOT resurrect the key); every
+   created replica and reference `Y.Doc` destroyed.
+
+### Changed files (permitted set only)
+
+- `packages/kit/tests/sync.property.test.ts` — corrected namespacing + deterministic raw-key case + bounded generators + shared reporter.
+- `packages/kit/tests/fc-report.ts` (new) — shared `reportRun` metrics/replay helper (not a `*.test.ts`, so not collected as a suite).
+- `packages/kit/tests/merge-invariant.property.test.ts` (new) — strengthened convergence-vs-reference property + deterministic deletion regression.
+- `packages/kit/tests/invariants.property.test.ts` — bounded generator (`maxLength: 16`) + shared reporter (metrics now print on pass).
+- `packages/kit/tests/conflict.property.test.ts` — shared reporter (metrics print on pass).
+- `.kiro/specs/core-sync-proof/tasks.md` — new section 8 (review-finding corrections) with checkboxes.
+- `docs/progress.md` — this section.
+
+`packages/kit/vitest.setup.ts` and `vitest.config.ts` were NOT changed (the stdout-write helper made
+a config edit unnecessary).
+
+### Verification commands and results (Windows PowerShell, from workspace root)
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date; already up to date |
+| 2 | `pnpm.cmd -F @ghostsync/kit typecheck` | 0 | strict typecheck clean (src + tests + config) |
+| 3 | `pnpm.cmd -F @ghostsync/kit test` | 0 | 14 files / 37 tests passed, 0 failed |
+| 4 | `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emitted src-only (5 `.js` + 5 `.d.ts`); no test files |
+| 5 | `git diff --check` | 0 | no whitespace/conflict errors (only cosmetic LF→CRLF warnings) |
+| 6 | `git status --short --branch` | 0 | HEAD still `c78e6f7`; only permitted files changed; nothing committed |
+
+### Actual per-property fast-check metrics (from real RunDetails, printed by the run)
+
+All six properties: `result=PASS`, `seed=424242`, `numRuns=200`, `numSkips=0`, `numShrinks=0`.
+
+| Property (name as printed) | seed | numRuns | numSkips | numShrinks | result |
+| --- | --- | --- | --- | --- | --- |
+| REQ-002 two-way convergence (disjoint A::/B:: namespaces) | 424242 | 200 | 0 | 0 | PASS |
+| AC-003-1 concurrent same-key resolves to a submitted value | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-1 idempotency (re-apply is a no-op) | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-2 commutativity (order independence) | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-3 grouping (mergeUpdates equals sequential) | 424242 | 200 | 0 | 0 | PASS |
+| REQ-004 fresh receivers converge vs Yjs reference (orig/perm/dup/merged) | 424242 | 200 | 0 | 0 | PASS |
+
+Test totals: **14 files, 37 tests passed, 0 failed** (up from 13 files / 34 tests: +1 file for the
+new merge-invariant property, +3 tests = the new merge-invariant property, its deterministic deletion
+regression, and the deterministic namespace case in `sync.property.test.ts`). No unresolved failures.
+No src defect surfaced against the Yjs reference — all receivers converged to the reference projection.
+
+### Known limitations (unchanged — still a Node in-memory proof)
+
+- Malformed/hostile Yjs bytes beyond carrier validation are still not handled (a shape-valid carrier
+  with corrupt bytes can throw inside `Y.applyUpdate`) — deferred to the capsule tier.
+- No payload size bounds, capsule versioning, or checksums. A checksum detects corruption; it does not
+  authenticate the sender.
+- No capsule codec, QR transfer, IndexedDB/browser storage, or app screens.
+- Browser/offline-persistence (persistence after reload) remains separate future work; the
+  export-then-restore path is the in-memory surrogate.
+
+## Next action (core-sync-proof)
+
+Reviewer re-runs the six commands and updates `.agents/tasks/core-sync-proof/review.json`. On verdict
+`APPROVED`, proceed to the next transfer tier (file transfer / capsule codec) per product steering.
+Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning (feat/sdk-foundation)
+
+Planning-only milestone for the reusable GhostSync SDK foundation. **No code, dependencies, builds,
+tests, commits, or pushes were performed in this step** — only three Markdown spec documents were
+created and this progress file was appended. Branch: `feat/sdk-foundation`.
+
+### Verified baseline
+
+- **Baseline commit:** `ab37419` ("feat: add verified core synchronization proof and Kiro specs").
+  Working tree clean except untracked `.agents/` (left untouched).
+- The prior `core-sync-proof` was **independently verified**: a browser-compatible scalar `Y.Map`
+  wrapper around Yjs, full-state binary updates carrying a separate `documentId`, fresh-replica
+  restoration with a new session `clientID`, lifecycle guards (post-`destroy` throws, idempotent
+  `destroy`), and **37 passing tests including six fast-check properties** (seed `424242`, 200 runs).
+- The real `packages/kit/src/*` and `packages/kit/package.json` were read at `ab37419` before planning;
+  the actual current signatures (`createKit().createReplica(documentId, seedBytes?)`, `Replica`
+  `set/delete/get/has/exportState/applyUpdate/getState/destroy`, and types `Scalar`/`State`/
+  `UpdateCarrier`/`ApplyOutcome`) are quoted verbatim in `design.md`.
+
+### SDK foundation status: PLANNED, not implemented
+
+Nothing in `packages/kit/src` or `packages/kit/tests` was changed. The spec describes additive work:
+
+- **Data model (selected + justified):** a top-level `Y.Map` named `entities` whose values are nested
+  `Y.Map<Scalar>` field maps (`Y.Map<Y.Map<Scalar>>`). Chosen over opaque per-entity JSON strings
+  (disallowed; kills field-level merge) and a flat composite-key map (leaks model into keys, non-atomic
+  entity delete). Field-level last-writer-wins; concurrent different-field edits both survive; same-field
+  conflict keeps exactly one submitted value (deliberate limitation — not every conflicting value is
+  preserved); entity deletion and edit-concurrent-with-deletion converge to one identical state.
+- **Public API additions (additive, backward-compatible):** `EntityAdapter<T>`, `Collection<T>`,
+  `SchemaIdentity`, `Fields`, `TransportUpdate`, `StateVector`, `TransportEnvelope`, `ChangeEvent`,
+  `ChangeListener`, `Unsubscribe`; new `Replica` methods `collection<T>()`, `exportStateVector()`,
+  `exportDiff()`, `subscribe()`; `ApplyOutcome` gains one `malformedUpdate` reason.
+- **Compatibility:** the baseline flat `set/delete/get/has/getState/exportState/applyUpdate/destroy`
+  surface stays, backed by a reserved default-collection facade, so the 37 existing tests and six
+  properties remain valid and unedited. One narrowing: `exportState()` returns `TransportUpdate`
+  (a structural superset of the baseline `UpdateCarrier`).
+- **Incremental sync:** `Y.encodeStateVector(doc)` + `Y.encodeStateAsUpdate(doc, remoteStateVector)`
+  alongside the unchanged full-state export; a legitimate no-op diff is non-empty Yjs bytes (zero-length
+  stays an invalid carrier).
+- **Notifications:** origin-tagged transactions (`LOCAL_ORIGIN`/`REMOTE_ORIGIN`) and a single
+  `doc`-level subscription that lets a consumer filter `origin==="remote"` to avoid feedback loops.
+- **Validation/errors:** per-layer responsibilities; foreign bytes are decoded in a scratch `Y.Doc`
+  first so a malformed update yields `malformedUpdate` with the live document unchanged (no assumption
+  that `Y.applyUpdate` rolls back). Validation is integrity/shape/identity only — not sender
+  authentication; adapter-level field validation of foreign bytes is a bounded, documented deferral.
+
+### Files created (exactly three) + updated (exactly one)
+
+- `.kiro/specs/sdk-foundation/requirements.md` (new) — REQ-SDK-001..007, NFR-SDK-001..006, EARS-style
+  acceptance criteria, scenarios, out-of-scope, and a requirement→task→test traceability table.
+- `.kiro/specs/sdk-foundation/design.md` (new) — overview, locked stack, baseline signatures quoted
+  from source, compatibility decision, concrete TypeScript API additions, structured-model + merge
+  semantics, identity, incremental sync, notifications, transport boundary, per-operation error table
+  with scratch-staging, FieldLedger + PatchBoard consumer examples, external-import instructions,
+  exact proposed file list, testability notes, and five unresolved decisions (U1–U5) each with a
+  recommended choice.
+- `.kiro/specs/sdk-foundation/tasks.md` (new) — ordered `- [ ]` checklist (T1–T10) linked to
+  requirement IDs, a coverage matrix, planned test cases per requirement, and the exact future
+  verification commands (`pnpm.cmd install --frozen-lockfile`; `pnpm.cmd -F @ghostsync/kit typecheck`;
+  `pnpm.cmd -F @ghostsync/kit test`; `pnpm.cmd -F @ghostsync/kit build`; a built-entry smoke-check
+  pattern). Every implementation task is pending; none is marked complete.
+- `docs/progress.md` (updated) — this section (prior milestone history preserved above).
+
+### Verification commands listed (NOT run — planning only)
+
+The future commands are recorded in `tasks.md` T10. No install, typecheck, test, or build was executed
+in this step; no planned test is claimed to have passed.
+
+### Proof lineage note
+
+This SDK foundation plan continues the **Node in-memory** proof lineage. Browser compatibility is a
+build-time requirement (no `node:` imports in `src`; library compiled without DOM libs), explicitly
+distinct from actual browser-executed evidence, which — together with IndexedDB persistence, offline
+app loading, service workers, file/QR capsules, checksums, and UI — remains future work.
+
+### Next action (sdk-foundation)
+
+Review `.kiro/specs/sdk-foundation/requirements.md`, `design.md`, and `tasks.md` at the
+design-and-tasks review gate **before any implementation**. The reviewer owns
+`.kiro/specs/sdk-foundation/.review/`. On an `APPROVED` verdict, begin implementation per the T1–T10
+task order. Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning — review-finding revision (feat/sdk-foundation)
+
+Planning-only revision pass. The first design-and-tasks review
+(`.kiro/specs/sdk-foundation/.review/review.json`) returned verdict `CHANGES_REQUESTED` with **2 MEDIUM
+and 4 NIT** findings. All six were addressed in the three spec docs; **no SDK source, tests, manifests,
+lockfile, steering, or apps were touched**. Still PLANNED, not implemented. Baseline remains `ab37419`.
+
+### Review findings addressed (all six)
+
+1. **MEDIUM — scratch-staging "live apply cannot throw" over-stated.** `design.md` now downgrades the
+   claim to an explicit assumption and makes AC-SDK-007-5 **unconditional**: the live `Y.applyUpdate`
+   is wrapped in `try/catch` with a pre-apply full-state snapshot that re-seeds the live doc on a throw
+   (no partial mutation). A new error-table row covers the defensive live-throw path; the rejection
+   guarantee text is updated; `requirements.md` AC-SDK-007-4/5 strengthened; `tasks.md` 7.3 implements
+   the snapshot-and-restore and 9.15 now plans a live-apply-throw test (not only a scratch-decode throw).
+2. **MEDIUM — no-feedback predicate inconsistent; termination not pinned.** All three docs now use one
+   predicate (re-broadcast only when `event.origin === "local"`). Termination is tied to AC-SDK-005-6
+   (an already-known remote apply is a no-op firing **zero** notifications → provable fixpoint);
+   `tasks.md` 9.12 now asserts the zero-notification mechanism, not merely that the loop stopped.
+3. **NIT — destroy error string.** `requirements.md` AC-SDK-005-5 now quotes the exact baseline string
+   `Error("GhostSync Kit: replica has been destroyed")`, matching design.md and the real `#assertAlive`.
+4. **NIT — `types: ["node"]` undocumented.** NFR-SDK-001 and design Technology stack now note it is a
+   type-checking-only convenience that adds no runtime `node:` dependency to `dist`; runtime
+   browser-compat is guaranteed by the 9.16 `no-node-imports` source scan.
+5. **NIT — `exportState` `.d.ts` narrowing unrecorded.** Design U2 now records the
+   `UpdateCarrier` → `TransportUpdate` narrowing as the single intentional type-level change,
+   source-compatible for value consumers, acceptable pre-1.0 (`version 0.0.0`).
+6. **NIT — traceability tables disagreed on REQ-SDK-003.** `requirements.md`'s REQ-SDK-003 row now maps
+   to `T3.4, T4`, matching the `tasks.md` coverage matrix (AC-SDK-003-2 is implemented by T3.4).
+
+### Files changed in this revision (planning docs only)
+
+- `.kiro/specs/sdk-foundation/requirements.md` — findings 2, 3, 4, 6, and AC-SDK-007-4/5 strengthening.
+- `.kiro/specs/sdk-foundation/design.md` — findings 1, 2, 4, 5, plus a "Responses to review findings"
+  section replacing the prior "no review exists yet" note.
+- `.kiro/specs/sdk-foundation/tasks.md` — findings 1 (tasks 7.3, 9.15) and 2 (task 9.12).
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+No implementation task was marked complete; every `tasks.md` item remains `- [ ]`. No dependencies were
+installed and no build or test was run — this remains a planning-only milestone in the Node in-memory
+proof lineage (browser/offline-persistence work remains future). The reviewer owns
+`.kiro/specs/sdk-foundation/.review/`; the loop stops when that `review.json` verdict is `APPROVED`.
+
+### Next action (sdk-foundation revision)
+
+Reviewer re-checks `requirements.md`, `design.md`, and `tasks.md` against the six findings and updates
+`.kiro/specs/sdk-foundation/.review/review.json`. On `APPROVED`, begin implementation per T1–T10.
+Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning — review-finding revision 2 (feat/sdk-foundation)
+
+Planning-only revision pass. The revision-2 design-and-tasks review
+(`.kiro/specs/sdk-foundation/.review/review.json`) confirmed all six round-1 findings **closed**, then
+surfaced three internal-contract conflicts in previously-untouched sections: verdict
+`CHANGES_REQUESTED` with **2 MEDIUM and 1 NIT**. All three were addressed in the spec docs; **no SDK
+source, tests, manifests, lockfile, steering, or apps were touched**. Still PLANNED, not implemented.
+Baseline remains `ab37419`.
+
+### Review findings addressed (all three)
+
+1. **MEDIUM — `Collection<T>` operation names conflict (requirements vs design/tasks).** `requirements.md`
+   AC-SDK-001-1 said the engine exposes `create`/`update`/`get`/`list`/`delete`, but the concrete
+   `Collection<T>` interface in `design.md` and all of `tasks.md` (3.3, 9.14) use
+   `put`/`get`/`list`/`delete`/`has` with a single create-or-overwrite `put`. Took the lower-risk fix:
+   AC-SDK-001-1 now reads "a typed `Collection<T>` whose `put`/`get`/`list`/`delete`/`has` operations
+   are typed in terms of the app's `T` (where `put(id, entity)` is create-or-overwrite)". Design and
+   tasks unchanged (the single-`put` model was already carried through them).
+2. **MEDIUM — state-vector carrier named `StateVectorRequest` in requirements but `StateVector` elsewhere.**
+   The one exported type now carries a single name, `StateVector`, across all four places:
+   `requirements.md` AC-SDK-006-1 / AC-SDK-006-4 and the `design.md` "Additive changes" bullet were
+   changed from `StateVectorRequest` to `StateVector`, matching the type definition, `TransportEnvelope`,
+   both `Replica` methods, and `tasks.md` 5.1/7.1.
+3. **NIT — `exportDiff` malformed-peer-state-vector behavior absent from the error table.** `design.md`
+   splits the combined export row so `exportDiff(remoteStateVector)` has its own row: it assumes a
+   well-formed peer `StateVector` from `exportStateVector()` (a same-process contract); a malformed
+   state vector is the caller's responsibility and out of scope this milestone. The same note was added
+   to the § Incremental synchronization `exportDiff` bullet, clarifying that untrusted foreign bytes
+   cross the trust boundary only at `applyUpdate`, where scratch-staging applies.
+
+### Files changed in this revision (planning docs only)
+
+- `.kiro/specs/sdk-foundation/requirements.md` — findings 1 (AC-SDK-001-1) and 2 (AC-SDK-006-1/4).
+- `.kiro/specs/sdk-foundation/design.md` — findings 2 ("Additive changes" bullet), 3 (error table +
+  incremental-sync note), plus a "Revision 2" entry in the "Responses to review findings" section.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+No implementation task was marked complete; every `tasks.md` item remains `- [ ]`. No dependencies were
+installed and no build or test was run — this remains a planning-only milestone in the Node in-memory
+proof lineage. The reviewer owns `.kiro/specs/sdk-foundation/.review/`; the loop stops when that
+`review.json` verdict is `APPROVED`.
+
+### Next action (sdk-foundation revision 2)
+
+Reviewer re-checks `requirements.md`, `design.md`, and `tasks.md` against the three findings and updates
+`.kiro/specs/sdk-foundation/.review/review.json`. On `APPROVED`, begin implementation per T1–T10.
+Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning — architecture-correction revision (revision 4, feat/sdk-foundation)
+
+Planning-only revision pass. The prior design-and-tasks review returned verdict `APPROVED` (2 NIT), but an
+**independent reviewer reproduced three real Yjs `13.6.33` data-loss/behavior defects** in the
+previously-approved nested-`Y.Map` design. This revision corrects the architecture in the three spec docs
+and this progress file. **No SDK source, tests, manifests, lockfile, steering, or apps were touched.**
+Still PLANNED, not implemented. Baseline remains `ab37419`. `.agents/` left untouched.
+
+### Ground-truth defects (reproduced with Yjs 13.6.33) and the corrections
+
+- **Defect A — nested-map identity loss.** Two replicas each doing `parent.set(id, new Y.Map())` offline do
+  NOT converge to one shared map; one side's fields are lost. **Correction:** the data model is replaced
+  from `Y.Map<Y.Map<Scalar>>` to **flat composite keys in the single top-level `root` `Y.Map`** — one leaf
+  key per field, encoding `SENTINEL "f" SEP esc(collection) SEP esc(entityId) SEP esc(field)` with a
+  NUL-introducer escape so the three reserved bytes (`\u0000`, `SENTINEL=\u0001`, `SEP=\u001f`) in any name
+  are unambiguous. Baseline flat keys stay **bare** top-level keys in `root`; `getState()` stays the flat
+  bare-key projection. No independently-created nested map is ever used. Concurrent same-id creation is
+  concurrent sibling-key sets that merge field-level, so no side's fields are lost.
+- **Defect B — full-rewrite clobber.** Rewriting all fields of an entity overwrites a concurrent edit to a
+  different field. **Correction:** `put` is a **changed-fields diff** (REQ-SDK-003A) — validate, then in one
+  transaction write only changed leaf keys, delete omitted-field keys, and perform NO write for unchanged
+  fields. Regression: A changes only `title`, B changes only `priority`; after exchange both survive.
+- **Defect C — no-op still fires `afterTransaction`.** An empty no-op update fires `afterTransaction` once
+  and `update` zero times. **Correction:** the false "Yjs never emits for a no-op" claim is removed;
+  observable change is derived from the transaction's **`root` key delta** (keys added/updated/deleted). A
+  no-op (empty delta) notifies ZERO subscribers even though `afterTransaction` fired.
+
+### Other corrections folded in (kept consistent across all three docs)
+
+- **Schema identity travels with the data:** `SchemaIdentity` is recorded as a reserved meta leaf key
+  (`SENTINEL "m" SEP esc(collection)`) in `root`, so it is in exported bytes and re-derivable on remote
+  import; mismatch is detectable after export/restore and after import (not a process-local registry).
+- **State-vector / `applyUpdate` boundary:** `applyUpdate` gains an ordered boundary — shape → **kind gate**
+  (reject `kind:"stateVector"` and unknown kinds BEFORE treating bytes as an update) → documentId → scratch
+  decode → live merge. `exportDiff(remoteStateVector: unknown)` validates the peer carrier and returns
+  distinguishable `ExportDiffResult` reasons (`invalidStateVector` / `documentIdMismatch`) with no mutation
+  and no notification. A valid no-op diff is non-empty bytes; zero-length stays `invalidCarrier`.
+- **Rejected-apply recovery lifecycle:** the live merge uses **staging-on-copy + swap** — build on a staging
+  doc seeded from a pre-apply snapshot, commit by swapping it in as the live doc (destroying the old doc and
+  **reconnecting the single `afterTransaction` observer**; subscriptions and `Collection` handles survive
+  because they resolve the doc lazily), or discard the staging doc on a throw. Guarantee is bounded HONESTLY
+  to the observable projection; a full-state snapshot is NOT assumed to capture pending out-of-order updates.
+  Subscriber exceptions are isolated (wrapped dispatch) so a listener throw is never reported as a malformed
+  update. Failure-path tests cover continued editing + sync AFTER a rejected apply.
+- **Documentation accuracy:** the "guaranteed browser-compatible" claim is downgraded — the no-`node:`-imports
+  scan is a STATIC check, not browser-runtime proof; browser execution evidence is explicitly PENDING. The
+  `ApplyOutcome` union gaining `"malformedUpdate"` is recorded as a potential MINOR breaking change for an
+  exhaustive consumer `switch`, not universally source-compatible.
+- **Prior `APPROVED` NITs also fixed:** REQ-SDK-007 traceability row now `T3, T7`; REQ-SDK-006 intro prose
+  drops "state-vector request".
+
+### Preserved baseline
+
+Baseline flat fields stay bare keys in the existing `root` `Y.Map` (name unchanged); `getState()` stays the
+flat projection and is NOT redefined to return all entities (structured snapshots come from
+`Collection#get`/`list`). A planned `baseline-fixture.test.ts` restores bytes produced by the `ab37419`
+build and asserts the flat projection round-trips. All 37 existing tests / 14 files / six fast-check
+properties remain in scope, unedited (NFR-SDK-005). Property reporting keeps seed `424242` / 200 runs via
+`tests/fc-report.ts` with real `RunDetails`.
+
+### Files changed in this revision (planning docs only)
+
+- `.kiro/specs/sdk-foundation/requirements.md` — rewritten to the composite-key model: new REQ-SDK-003A
+  (changed-fields put), expanded REQ-SDK-002 (concurrent create, reused id, escaping), REQ-SDK-003 (schema
+  travels in-doc), REQ-SDK-005 (key-delta notifications + listener isolation), REQ-SDK-007 (kind boundary,
+  exportDiff rejection, honest recovery bound), NFR-SDK-001/004 doc-accuracy fixes, explicit limitations,
+  and corrected traceability.
+- `.kiro/specs/sdk-foundation/design.md` — new § Storage layout (composite-key grammar + escaping), rewritten
+  merge semantics (defect-A guard), changed-fields `put`, in-doc schema identity, validated `exportDiff`,
+  kind-gated/staging-and-swap `applyUpdate`, key-delta notifications, updated error table and API signatures
+  (`exportDiff(unknown): ExportDiffResult`), U1–U7 decisions, and a "Responses to review findings" section
+  recording the A/B/C corrections and the two prior NITs.
+- `.kiro/specs/sdk-foundation/tasks.md` — tasks updated to the composite-key codec (T3.1), changed-fields
+  put (T3.3), in-doc schema identity (T3.4), validated exportDiff (T5.2), key-delta notifications +
+  listener isolation (T6.3/6.4), kind-gated staging-and-swap apply (T7.3), and new planned tests
+  (`concurrent-create`, `key-escaping`, `put-changed-fields`, `schema-identity`, `apply-kind-boundary`,
+  `export-diff-rejection`, `baseline-fixture`, continued-edit-after-reject). Every task pending; no planned
+  test claimed passing.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+No implementation task was marked complete; every `tasks.md` item remains `- [ ]`. No dependencies were
+installed and no build or test was run — this remains a planning-only milestone in the Node in-memory proof
+lineage (browser/offline-persistence work remains future, browser execution pending). The reviewer owns
+`.kiro/specs/sdk-foundation/.review/`.
+
+### Next action (sdk-foundation revision 4)
+
+Independent reviewer re-checks `requirements.md`, `design.md`, and `tasks.md` against defects A/B/C and the
+boundary/recovery/doc-accuracy corrections, and updates `.kiro/specs/sdk-foundation/.review/`. On
+`APPROVED`, begin implementation per T1–T10. Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation spec planning — MEDIUM-1 correction (revision 5, two separate top-level maps, feat/sdk-foundation)
+
+Planning-only, documentation-only revision pass. The architecture-correction review
+(`.kiro/specs/sdk-foundation/.review/spec-correction-verdict.json`) returned verdict `CHANGES_REQUESTED`
+with **1 MEDIUM and 2 NITs** against revision 4. It confirmed defects A/B/C were reproduced and the
+corrections held, but blocked on MEDIUM-1. All three findings are addressed in the three spec docs plus a
+dated supersession note in the historical review artifact. **No SDK source, tests, manifests, lockfile,
+steering, or apps were touched.** Still PLANNED, not implemented. Baseline remains `ab37419`. `.agents/`
+left untouched.
+
+### The architecture decision applied
+
+Revision 4 placed the flat composite structured keys in the **same** top-level `root` `Y.Map` as the
+legacy scalar keys, then needed a bare-vs-structured discriminator so `getState()` would project only the
+legacy keys. MEDIUM-1 found that discriminator self-contradictory (three disagreeing definitions) and
+undefined where a legacy user key is byte-identical to a structured field key. The user's decided
+architecture — applied verbatim here — uses **two separate top-level shared maps in the same `Y.Doc`**:
+
+- **`doc.getMap("root")`** — the LEGACY scalar map, preserved EXACTLY as `ab37419`: `set/get/has/delete`
+  operate directly on it with bare keys; `getState()` projects EVERY key in it (reuse `src/state.ts`
+  `project` as-is — no sentinel filtering, no escaping, no reserved prefixes, no migration, no
+  classification); the baseline byte fixture still restores; and NO key is ever reserved or rejected,
+  including a key beginning with the sentinel char or byte-identical to a structured field key. The
+  previously-proposed restriction on `\u0001`-prefixed legacy keys is removed.
+- **`doc.getMap("ghostsync:records:v1")`** — the STRUCTURED records map holding the flat composite-key
+  records with collision-safe component encoding, collection isolation, field-level merge, `SchemaIdentity`
+  meta records, and deletion rules. All internal prefixes/sentinels/escaping apply ONLY inside this map.
+
+Both maps belong to the same `Y.Doc`, so `Y.encodeStateAsUpdate(doc)` (full) and
+`Y.encodeStateAsUpdate(doc, sv)` (differential) export/import BOTH maps automatically. **Map membership —
+not a key-shape predicate — decides which API owns a key.** No nested per-entity maps (defect A); no
+`__default__` map.
+
+### Review findings addressed (all three)
+
+1. **MEDIUM-1 — self-contradictory bare-vs-structured discriminator. Addressed by removing it entirely.**
+   Every conflicting predicate was replaced with the two-map layout: design § Storage layout item 1's
+   "first char ≠ `SENTINEL`", the `SENTINEL` paragraph's "deterministic re-derivation; see below" dangling
+   reference, and tasks 3.1/3.2's dual predicates are all gone. `getState()` reuses `project(root)`
+   unchanged; structured reads go through `Collection` against the records map; the legacy-key reservation
+   was removed. New regression tests specify the collision cases (test 1: a legacy `root` key byte-identical
+   to a structured field key coexists, each API reads its own value; test 2: sentinel-prefixed legacy keys
+   remain valid). New AC-SDK-002-10 / AC-SDK-002-11 pin the behavior.
+2. **NIT-1 — dual key-delta accessor wording. Addressed.** Standardized on `transaction.changed.get(map)`
+   (`Set<string|null>`; undefined/empty = no change) for `doc.getMap("root")` and
+   `doc.getMap("ghostsync:records:v1")`; dropped the "/ the keys delta" alternative. Notifications now
+   inspect BOTH maps and emit AT MOST ONE notification per qualifying transaction (defect C honored).
+3. **NIT-2 — stale "re-seed-on-throw" recovery language in `.review/review.md`. Addressed (docs hygiene).**
+   A dated supersession note was added to the revision-3 `.review/review.md` labelling its re-seed-on-throw
+   description as superseded by staging-and-swap (U6). The review history is preserved (no deletion).
+
+### Preserved intact from prior revisions
+
+Changed-fields `put` (defect B), key-delta-derived notifications (defect C), the kind-gated
+state-vector/`applyUpdate` boundary with distinguishable reasons and no mutation/notification, and the
+bounded staging-and-swap apply/recovery (U6) are all unchanged except for extending the delta inspection to
+both maps. The 37 existing tests / 14 files / six fast-check properties stay unedited (NFR-SDK-005); seed
+`424242` / 200 runs via `tests/fc-report.ts` preserved.
+
+### Files changed in this revision (permitted docs only)
+
+- `.kiro/specs/sdk-foundation/requirements.md` — revision-5 header; two-map Summary/Definitions; REQ-SDK-002
+  two-map model + new AC-SDK-002-10/11; AC-SDK-002-8/9 scoped; schema-identity meta key in the records map
+  (AC-SDK-003-2); REQ-SDK-005 both-map key-delta notifications; NFR-SDK-005 and Assumptions updated;
+  traceability row updated.
+- `.kiro/specs/sdk-foundation/design.md` — revision-5 header; Overview + Compatibility rewritten to two
+  maps; § Storage layout rewritten (two maps, codec scoped to the records map, discriminator and dangling
+  reference removed); merge/enumeration/projection/identity updated; Lifecycle notifications use the single
+  `transaction.changed.get(map)` accessor over both maps; staging-and-swap delta over both maps; U1/U3
+  updated; new "Architecture-correction revision 5" responses subsection; proposed-file notes updated.
+- `.kiro/specs/sdk-foundation/tasks.md` — revision-5 header; T3.1 codec scoped (no predicate exported),
+  T3.2 direct-on-`root` with no filtering/reservation, T3.3/T3.4 on the records map; T6.3 both-map
+  one-notification rule; T7.3 both-map delta; new 9.4a `two-map-layout.test.ts`; 9.8 extended with collision
+  tests 1 and 2; 9.15/9.16 both-map notification paths; 9.22 baseline-fixture note; coverage matrix updated.
+- `.kiro/specs/sdk-foundation/.review/review.md` — dated supersession note (NIT-2); history preserved.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+No implementation task was marked complete; every `tasks.md` item remains `- [ ]`. No dependencies were
+installed and no build or test was run — this remains a planning-only milestone in the Node in-memory proof
+lineage. No planned application test is claimed to have passed.
+
+### Next action (sdk-foundation revision 5)
+
+Reviewer re-checks `requirements.md`, `design.md`, and `tasks.md` against MEDIUM-1 / NIT-1 / NIT-2 and the
+two-map layout, and updates `.kiro/specs/sdk-foundation/.review/`. On `APPROVED`, begin implementation per
+T1–T10. Nothing was committed, pushed, or deployed in this step.
+
+## sdk-foundation IMPLEMENTATION (feat/sdk-foundation)
+
+The approved two-map SDK foundation is now **implemented, tested, built, and smoke-checked** against the
+built entry. This is still a **Node in-memory** milestone; browser runtime remains UNVERIFIED (static
+no-`node:`-imports scan only). Branch `feat/sdk-foundation`. Baseline `ab37419` unchanged. **Nothing was
+committed or pushed.** `.agents/` untouched; untracked files preserved.
+
+Legend below distinguishes **implemented** (code written), **tested** (a real test asserts it and passed),
+and **independently verified** (a verification command exit code or a decoded-bytes check confirms it).
+
+### Files changed
+
+New `src` (implemented):
+- `packages/kit/src/adapter.ts` — `SchemaIdentity`, `Fields`, `EntityAdapter<T>`, `assertSchemaIdentity`,
+  `schemaIdentityEqual`.
+- `packages/kit/src/keys.ts` — composite-key codec for the records map only: `RECORDS_MAP`,
+  `SENTINEL`/`SEP`, NUL-introducer `esc`/`unesc`, `fieldKey`/`metaKey`/`fieldKeyPrefix`/`parseFieldKey`,
+  and `collectionId(app, entityType)` (clarification 1). No bare-vs-structured predicate.
+- `packages/kit/src/collection.ts` — `Collection<T>`, `GetResult<T>`, `IncompleteRecordError`,
+  `CollectionHost` (lazy doc resolution), `CollectionImpl` (changed-fields `put`, controlled reads,
+  schema record/recheck, delete-in-one-transaction).
+
+Modified `src` (additive; existing behavior preserved):
+- `packages/kit/src/types.ts` — added `StateVector`, `TransportUpdate`, `TransportEnvelope`,
+  `ExportDiffResult`, `ChangeEvent`, `ChangeListener`, `Unsubscribe`; extended `ApplyOutcome` with
+  `malformedUpdate`; extended `Replica` (`collection`/`exportStateVector`/`exportDiff`/`subscribe`,
+  `exportState` narrowed to `TransportUpdate`). `getState()` stays the flat `root` projection.
+- `packages/kit/src/replica.ts` — `LOCAL_ORIGIN`/`REMOTE_ORIGIN` symbols; all mutations in
+  `doc.transact(fn, origin)`; single `afterTransaction` observer deriving change from the combined key
+  delta of both maps; kind-gated, snapshot-and-swap `applyUpdate`; `exportStateVector`/`exportDiff` with
+  carrier validation; `subscribe` with exception-isolated dispatch; `collection<T>()` via a lazy
+  `CollectionHost`. Baseline `set/delete/get/has/getState` still operate directly on `root`.
+- `packages/kit/src/index.ts` — re-export the new public surface.
+
+New tests (25 files) under `packages/kit/tests/` and `packages/kit/tests/fixtures/` (see totals below).
+`packages/kit/tests/fixtures/baseline-ab37419.ts` carries the REAL baseline bytes + provenance;
+`packages/kit/tests/fixtures/adapters.ts` carries the FieldLedger + PatchBoard adapters.
+
+Spec docs reconciled to the implementation + six clarifications:
+`.kiro/specs/sdk-foundation/{requirements,design,tasks}.md`. `docs/progress.md` — this section.
+
+The 14 baseline test files were NOT modified. No `package.json`, lockfile, `tsconfig*`, `vitest*`,
+steering, or app changes.
+
+### Key decisions
+
+- **Collection id tuple encoding (clarification 1):** `collectionId = esc(app) + SEP + esc(entityType)`
+  using the composite-key escaping, so two distinct tuples can never collide. `schemaVersion` lives in
+  the persisted meta key, not the namespace. Schema components validated at runtime.
+- **Pending-updates handling (clarification 2):** Yjs 13.6.33 `encodeStateAsUpdate` includes pending
+  structs/ds; the snapshot seed carries them across the swap, so pending out-of-order updates are
+  PRESERVED. The prior "loss acceptable" claim was removed from all three docs. Verified by a dependency
+  regression (later diff before prerequisite, across an intervening swap) + delete-before-insert +
+  snapshot/restore. Fresh `clientID` per `new Y.Doc()` is preserved; never copied.
+- **Apply lifecycle (clarification 3):** `applyUpdate` uses **direct-apply + snapshot-rollback**. It
+  captures a committed pre-apply snapshot, DETACHES the change observer (so no mid-throw partial state is
+  dispatched), attaches a one-shot delta probe, and applies the foreign bytes directly to the live doc;
+  on a throw it rebuilds the committed doc from the snapshot and reattaches the observer (committed
+  projection unchanged); on success it reattaches the observer and fires one remote notification iff a key
+  changed. Listeners and `Collection` handles are preserved (handles resolve the committed doc lazily). A
+  subscriber throw never turns a successful apply into a rejection. **A staging-copy-then-swap and a
+  separate empty scratch decode were both dropped for performance** — each did a full snapshot +
+  `new Y.Doc()` + extra apply on EVERY apply (~6×/~2× cost) and pushed the unmodified baseline
+  `merge-invariant.property.test.ts` past its 5s per-test timeout under parallel worker load. The
+  observable-projection guarantee is identical (observer detached ⇒ no mid-throw dispatch; snapshot
+  rollback ⇒ committed projection deep-equal to before on any `ok:false`).
+- **Incomplete-record error (clarification 4):** reads run `fromFields` + `validate`; `getResult` returns
+  `{ ok:false, reason:"invalidRecord", fields }` and `get` throws `IncompleteRecordError`, preserving the
+  underlying fields; `list` skips invalid records.
+- **Schema recheck (clarification 5):** compatibility is rechecked on every `Collection` op (not only at
+  open), so a conflicting version imported via `applyUpdate` after a handle exists is caught
+  deterministically.
+- **put stale-form note (clarification 6):** changed-fields diff vs CURRENT LOCAL state; a stale full
+  entity can still overwrite; no stale-form safety is promised.
+
+### Verification commands and results (Windows PowerShell, from workspace root; exit = `$LASTEXITCODE`)
+
+| # | Command | Exit | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date; no dependency/lockfile change |
+| 2 | `pnpm.cmd -F @ghostsync/kit typecheck` | 0 | strict typecheck clean (src + tests + config) |
+| 3 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **39 files / 102 tests passed, 0 failed** |
+| 4 | `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emits 8 `.js` + 8 `.d.ts`; no test files |
+| 5 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings) |
+| 6 | `git status --short --branch` | 0 | 14 baseline test files unchanged; `.agents/` + untracked preserved; nothing committed |
+| 7 | built-entry smoke (`node` against `dist/index.js`, then deleted) | 0 | **SMOKE PASS** |
+
+Test totals: **39 test files, 102 tests, 0 failed** (14 baseline files / 37 tests unchanged + 25 new
+files / 65 new tests). No `.skip`/`.todo`/`.only`; no weakened assertions.
+
+### Per-property fast-check RunDetails (actual, printed by the run; seed 424242, 200 runs)
+
+| Property (name as printed) | seed | numRuns | numSkips | numShrinks | result |
+| --- | --- | --- | --- | --- | --- |
+| REQ-002 two-way convergence (disjoint A::/B:: namespaces) | 424242 | 200 | 0 | 0 | PASS |
+| AC-003-1 concurrent same-key resolves to a submitted value | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-1 idempotency (re-apply is a no-op) | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-2 commutativity (order independence) | 424242 | 200 | 0 | 0 | PASS |
+| AC-004-3 grouping (mergeUpdates equals sequential) | 424242 | 200 | 0 | 0 | PASS |
+| REQ-004 fresh receivers converge vs Yjs reference (orig/perm/dup/merged) | 424242 | 200 | 0 | 0 | PASS |
+| REQ-SDK-002 structured convergence (concurrent same-id) | 424242 | 200 | 0 | 0 | PASS |
+| REQ-SDK-004 diff convergence equals full-state | 424242 | 200 | 0 | 0 | PASS |
+
+Six baseline properties + two new SDK properties = 8 properties, all PASS, all via `tests/fc-report.ts`
+(real `RunDetails`, bounded generators).
+
+### Baseline-fixture provenance (REAL, independently verified)
+
+- The fixture bytes in `packages/kit/tests/fixtures/baseline-ab37419.ts` are a genuine `exportState().bytes`
+  produced by the **baseline build at commit `ab3741949a5565196b6c8405dce9d1720810eade`**.
+- Generated by `git worktree add --detach <temp> ab37419` into an isolated temp dir OUTSIDE the working
+  tree, `pnpm install --frozen-lockfile` + `pnpm -F @ghostsync/kit build` there, then a one-off Node
+  script imported the BASELINE `dist/index.js`, wrote known scalar keys (`alpha=1, beta="two",
+  gamma=true, delta=null, epsilon=3.5`), and printed base64 of `exportState().bytes`. Node v24.14.0,
+  pnpm 10.34.9, 2026-11-08.
+- The temp worktree was removed (`git worktree remove --force`) and the temp dir deleted; the main
+  working tree was never switched or reset. `baseline-fixture.test.ts` restores the real bytes into a
+  fresh current-build replica and asserts `getState()` deep-equals the known flat state — **PASS**
+  (independently confirms `root`'s encoded structure is unchanged by adding the records map).
+
+### Built-entry smoke result (independently verified)
+
+A temporary `smoke.mjs` imported the BUILT `dist/index.js` public entry and asserted: both the FieldLedger
+and PatchBoard adapters via the same SDK; legacy (root) vs structured (records map) isolation including a
+legacy key byte-identical to a structured field key; two-way DIFFERENTIAL sync (state vector + diff)
+converging; notification origins (local for local writes, remote once for an applied update, ZERO for a
+re-applied no-op). Printed `SMOKE PASS`, exit 0. The script was then DELETED (not left in the repo).
+
+### Known limitations (unchanged scope)
+
+- Browser runtime execution remains UNVERIFIED — only the static no-`node:`-imports scan
+  (`no-node-imports.test.ts`) covers NFR-SDK-001.
+- No capsule codec, checksums, size bounds, QR, IndexedDB/service workers, offline app loading, or UI
+  (all future tiers). A checksum detects corruption; it does not authenticate the sender. Caller metadata
+  (documentId/app/schemaVersion) identifies intent only; it does not authenticate bytes or sender.
+- Adapter-level field validation of FOREIGN bytes is deferred to the capsule/schema tier (a peer could
+  introduce a field the local adapter would reject on a local write) — a stated, bounded limitation.
+
+No substantive architectural blocker remains: the pending-update/dependency case converges (verified),
+no dependency was added, and all four pnpm commands exit 0.
+
+### Next action (sdk-foundation implementation)
+
+One final code review of this implementation + diff. Nothing was committed or pushed.
+
+## sdk-foundation — independent-review corrections round (feat/sdk-foundation)
+
+A code+test correction round applying three independent-review findings to the implemented SDK Kit.
+The two-map architecture (legacy `root` + structured `ghostsync:records:v1`) and the direct-apply +
+snapshot-rollback-on-throw recovery strategy are UNCHANGED. Still a Node in-memory proof; no new
+dependency, manifest, lockfile, tooling, steering, or app change. Nothing committed or pushed;
+`.agents/` untouched. The prior `APPROVED` verdict and earlier findings are left in the record.
+
+### Corrections implemented
+
+1. **Correction 1 — schema recheck on EVERY collection operation.** Before this round only `put`
+   (and `open`) rechecked schema identity; `get`/`getResult`/`list`/`delete`/`has` did NOT, so a
+   handle opened at v1 kept serving reads/enumeration/deletes after a causally-newer v2 meta arrived.
+   This round ADDS the recheck to the read/enumeration/delete paths (and the new `listResults`), so
+   every public `Collection` operation calls `#assertSchemaCompatible()` BEFORE doing any work and a
+   mismatch raises the documented schema-mismatch `Error` — never degraded into `absent`/`undefined`
+   or `invalidRecord`. A delete through an incompatible handle throws before any scan/transaction, so
+   it neither mutates nor notifies. The guard now validates the PARSED meta (`assertSchemaIdentity` on
+   the `JSON.parse` result) before comparing, so corrupt persisted meta (non-string, unparseable,
+   `null`, non-object, missing/mistyped field) yields a controlled schema error, not a crash or a
+   silent pass. Only `packages/kit/src/collection.ts` changed (no shared-type move needed).
+2. **Correction 2 — `listResults()` exposes invalid records.** Added
+   `Collection<T>.listResults(): ReadonlyArray<readonly [string, GetResult<T>]>` enumerating every
+   stored entity id (including invalid/incomplete records) using the EXISTING `GetResult<T>` shape,
+   without deleting, repairing, or fabricating fields. `list()` keeps its valid-record-only behavior.
+   `GetResult` was ALREADY a public export in `index.ts`, so no `index.ts` change was required.
+3. **Correction 3 — real partial-mutation recovery regression (test-only).** A regression that first
+   proves, on raw `Y.Docs`, that the final-byte truncation of an encoded `root["injected"]="bad"`
+   update genuinely partially mutates the target doc (throws yet leaves `injected` present), then
+   feeds the SAME bytes through the public `applyUpdate` to a populated replica and asserts the
+   snapshot-rollback recovery: `malformedUpdate`, legacy+structured state preserved, `injected`
+   absent, zero notifications, surviving handles/subscribers, converging subsequent edit+sync, and a
+   pending dependent update surviving the rejected apply then integrating on prerequisite delivery.
+
+### Files changed (permitted set only)
+
+- `packages/kit/src/collection.ts` — Corrections 1 & 2 (schema recheck on every op; `listResults`;
+  parsed-meta validation). No other `src` file changed; `index.ts` NOT changed (`GetResult` already
+  exported).
+- `packages/kit/tests/schema-recheck-all-ops.test.ts` (new) — Correction 1 deterministic regression.
+- `packages/kit/tests/list-results.test.ts` (new) — Correction 2 valid+invalid enumeration regression.
+- `packages/kit/tests/partial-mutation-recovery.test.ts` (new) — Correction 3 recovery regression.
+- `.kiro/specs/sdk-foundation/requirements.md` — AC-SDK-001-1 (operation list incl. `listResults`),
+  AC-SDK-007-2 (every-operation recheck + corrupt-meta validation + honest "read/enumeration/delete
+  paths previously did NOT recheck" statement).
+- `.kiro/specs/sdk-foundation/design.md` — Collection interface (`listResults`), identity recheck
+  correction note, recovery regression note.
+- `.kiro/specs/sdk-foundation/tasks.md` — new T11 section (implemented+verified) + coverage-matrix rows.
+- `docs/progress.md` — this section.
+
+### Verification commands and results (Windows PowerShell, from workspace root)
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd -F @ghostsync/kit typecheck` | 0 | strict typecheck clean (src + tests + config) |
+| 2 | `pnpm.cmd -F @ghostsync/kit test` | 0 | 42 files / 112 tests passed, 0 failed (was 39/102) |
+| 3 | `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emitted src-only (8 `.js` + 8 `.d.ts`), no test files |
+| 4 | `git diff --check` | 0 | no whitespace/conflict errors (only cosmetic LF→CRLF warnings) |
+| 5 | `git status --short --branch` | 0 | branch `feat/sdk-foundation`; only permitted files changed; nothing committed |
+
+All original 102 tests still pass with no weakened assertions; +10 new tests across 3 new files.
+All 8 fast-check properties: `result=PASS`, `seed=424242`, `numRuns=200`, `numSkips=0`, `numShrinks=0`
+(reused `tests/fc-report.ts`; no new property added). No `.skip`/`.todo`/`.only`; no timeout change.
+
+### Next action (sdk-foundation correction round)
+
+Reviewer re-runs the five commands and records a verdict in
+`.kiro/specs/sdk-foundation/.review/corrections-round.json`. The loop stops when that verdict is
+`APPROVED`. Nothing was committed, pushed, or deployed in this step.
+
+## browser-persistence spec planning (feat/browser-persistence)
+
+Planning-only milestone for the smallest reliable **browser-persistence** foundation. **No code,
+dependencies, builds, tests, commits, or pushes were performed in this step** — only three Markdown spec
+documents were created and this progress file was appended. Branch: `feat/browser-persistence`.
+
+### Verified baseline
+
+- **Baseline commit:** `d53452f` ("feat: implement verified reusable GhostSync SDK foundation").
+  `git status --short --branch` showed `## feat/browser-persistence` with only untracked `.agents/`
+  (left untouched); `origin` not modified. Node `v24.14.0`, pnpm `10.34.9`.
+- The **sdk-foundation** milestone is implemented, verified, committed, and pushed: `@ghostsync/kit`
+  exposes replicas, collections, full-state exports (`exportState() → TransportUpdate`), validated imports
+  (`applyUpdate(unknown) → ApplyOutcome` with direct-apply + snapshot-rollback-on-throw), change
+  subscriptions, and controlled invalid-record enumeration (`listResults()` + `GetResult<T>`). Legacy data
+  and structured records live in SEPARATE top-level Yjs maps (`doc.getMap("root")` and
+  `doc.getMap("ghostsync:records:v1")`). **112 tests across 42 files and eight fast-check properties pass.**
+- The real `packages/kit/src/*`, `package.json`, `tsconfig*.json`, and `vitest.config.ts` were read at
+  `d53452f` before planning; the actual signatures are quoted verbatim in `design.md`.
+- **Browser runtime remains UNVERIFIED.** The SDK milestone is a Node in-memory proof plus a static
+  no-`node:`-imports scan; no browser execution evidence exists yet.
+
+### browser-persistence status: PLANNED ONLY, not implemented
+
+Nothing in `packages/kit` or any app was changed. The spec describes a NEW, additive, browser-targeted
+workspace package **`@ghostsync/persist` (`packages/persist`)** that keeps all IndexedDB / Web Locks
+dependencies OUT of `packages/kit`:
+
+- **Scope (honest):** this milestone proves **data persistence and editing in an ALREADY-LOADED browser
+  page with networking DISABLED**. It does **NOT** implement **cold offline loading** (cached application
+  assets / service worker) and must not claim to — that is a later bounded **Phase-4** milestone. No server
+  sync, no hidden network dependency.
+- **Model:** persist a single **full-state snapshot** (`exportState().bytes`, which captures both top-level
+  maps and pending out-of-order updates) per storage key; restore via `createReplica(documentId, bytes)`.
+  Update-log / compaction machinery is explicitly deferred and justified (NFR-BP-005).
+- **Storage key (collision-safe):** `esc(app) + SEP + esc(documentId) + SEP + esc(replicaId)` using the
+  Kit's NUL-introducer escape. A stable local `replicaId` (`crypto.randomUUID()` when omitted) is DISTINCT
+  from the Yjs session `clientID`; two replicas of the same `documentId` with different `replicaId` persist
+  separately. IndexedDB is per-origin, per-profile (a browser boundary the package relies on).
+- **API:** async `openReplica(options) → Promise<PersistSession>` validates stored bytes BEFORE handing out
+  a ready session (no early-edit overwrite; corrupt record → visible recoverable `PersistenceError`, never
+  auto-wipe). `PersistSession` exposes reads/exports + local edits + the ONLY supported import path
+  `session.applyUpdate` + a `dirty/saving/saved/error` state machine + `flush()` + `close()`.
+- **Durability:** `saved` set ONLY in `transaction.oncomplete`; a monotonic `sequence`/generation guard
+  drops stale async writes; failed save keeps the live replica intact and retries on next flush/dirty;
+  unload flush is best-effort only (no durability promise on tab close).
+- **Persist every accepted update (REQ-BP-004):** because an accepted out-of-order update can stay pending
+  WITHOUT firing a notification, `session.applyUpdate` marks dirty on EVERY `ok` (including pending/no-op);
+  rejected imports are never persisted; direct `replica.applyUpdate` bypasses persistence and is unsupported.
+- **Concurrency (REQ-BP-005):** same-key two-tab = single-writer via the **Web Locks API** (built-in, no
+  dependency); the non-owner is read-only / awaiting; ownership transfer re-reads before writing; separate
+  keys are both writers (safe). Degraded, visible fallback when Web Locks or IndexedDB is unavailable.
+- **Verification plan (REQ-BP-007):** real IndexedDB in **Chromium via Playwright** covering the reload
+  survival matrix (legacy + structured survive; replicaId isolation; restored convergence; pending
+  dependent update survives reload then integrates; remote imports persist; save failure visible + retry;
+  concurrent same-key policy; invalid records discoverable via `listResults`). A Node mock
+  (`fake-indexeddb`) layer is for FAST FEEDBACK only and is explicitly NOT acceptance evidence. Observable
+  readiness + bounded timeouts, never sleeps.
+
+### Proposed dependencies (NOT installed — planning only)
+
+- IndexedDB access: **none (raw IndexedDB)** — dependency-free; keeps `oncomplete`-gated durability explicit.
+- Concurrency: **none (Web Locks browser built-in)**.
+- `@ghostsync/kit` — workspace dependency.
+- Dev (acceptance): **`@playwright/test@1.56.0`**; dev (fast feedback): **`fake-indexeddb@6.2.2`**; reuse
+  the Kit's `typescript@7.0.2`, `@types/node@24.19.2`, `vitest@5.1.0`. Exact future `pnpm.cmd` install/
+  build/test commands are listed in `design.md` and `tasks.md`; none were run.
+
+### Files created (exactly three) + updated (exactly one)
+
+- `.kiro/specs/browser-persistence/requirements.md` (new) — Summary, Assumptions, REQ-BP-001..007 with
+  EARS acceptance criteria and a named planned test each, NFR-BP-001..006, consolidated acceptance criteria,
+  and Out of Scope (cold offline loading explicitly excluded).
+- `.kiro/specs/browser-persistence/design.md` (new) — overview, locked stack, verbatim Kit signatures,
+  concrete TypeScript API (`openReplica`, `PersistSession`, `SaveState`, `PersistenceError`,
+  `StoredRecord`), storage key format, record/version format + validation order, lifecycle + generation
+  rule + unload note, routed-import mechanism, Web Locks concurrency, per-operation error table, input
+  validation, invariant ownership, exact proposed files, dependency choices with pinned versions + exact
+  future PowerShell commands, external-consumer import, testability + traceability, and U1–U6 unresolved
+  decisions each with a recommendation.
+- `.kiro/specs/browser-persistence/tasks.md` (new) — ordered `- [ ]` checklist (scaffold; key+record codec;
+  async open/restore/validate; save state machine + generation/flush; routed import; Web Locks concurrency;
+  error/lifecycle; Playwright harness; full test plan), each linked to REQ-BP IDs, with the exact future
+  PowerShell commands and a coverage matrix. Every implementation task pending; no planned test claimed
+  passing.
+- `docs/progress.md` (updated) — this section (all prior milestone history preserved above).
+
+### Verification commands and results (Windows PowerShell, from workspace root; planning only)
+
+| # | Command | Exit | Result |
+| --- | --- | --- | --- |
+| 1 | `git diff --check` | 0 | no whitespace/conflict errors |
+| 2 | `git status --short --branch` | 0 | `## feat/browser-persistence`; three new spec files + modified `docs/progress.md` + untracked `.agents/` only |
+
+No dependencies were installed and no build or test was run in this step — planning only. No planned test is
+claimed to pass. The SDK's 112 tests and eight properties are preserved (this milestone adds a new package;
+it does not edit `packages/kit`). `.agents/` left untouched; nothing committed or pushed; `origin` untouched.
+
+### Milestone distinction
+
+- **This milestone (browser-persistence):** data persistence + editing in a loaded page, networking
+  disabled. IndexedDB persistence via `@ghostsync/persist`.
+- **Later Phase-4 milestone (cold offline loading):** cached application assets + service worker so the app
+  loads with no network from a cold start. NOT in scope here and NOT implemented.
+
+### Next action (browser-persistence)
+
+Review `.kiro/specs/browser-persistence/requirements.md`, `design.md`, and `tasks.md` at the
+requirements-and-design review gate **before any implementation**. On an `APPROVED` verdict, begin
+implementation per the task order. Nothing was committed, pushed, or deployed in this step.
+
+## browser-persistence spec planning — review-finding correction (feat/browser-persistence)
+
+Planning-only, documentation-only correction pass. The first design-and-tasks review
+(`.kiro/specs/browser-persistence/.review/review.md`) returned verdict **CHANGES_REQUESTED** with
+**2 MEDIUM + 4 NIT**. All six are addressed in the three spec docs; this progress file is appended. **No
+`packages/kit/*`, `apps/*`, manifests, lockfile, tooling, steering, or `.agents/` were touched; no
+dependencies installed; no build/test run; nothing staged, committed, pushed, reset, or deployed.** Branch
+`feat/browser-persistence`; baseline `d53452f`; `origin` untouched. Still PLANNED-only — every `tasks.md`
+item remains `- [ ]` and no planned test is claimed passing. The Kit's **112 tests / 8 properties** stay
+preserved (kit untouched). Offline scope stays bounded to loaded-page persistence (not cold offline
+loading).
+
+### Corrections applied (all six findings)
+
+1. **MEDIUM-1 — reader-role mutation unspecified (silent-loss hazard) + NIT-3.** Simplified same-key
+   concurrency to **EXCLUSIVE single-writer sessions**. Removed the reader role, the reader-mutation path,
+   and automatic ownership transfer **entirely** (no `role === "reader"` anywhere). A session acquires a
+   **non-waiting exclusive Web Lock** (`{ mode: "exclusive", ifAvailable: true }`) for the storage identity
+   **BEFORE** reading/restoring its IndexedDB record and holds it for the **whole session lifetime** (through
+   saves and final close). Same-key contention → `openReplica` rejects with `StorageInUseError` and the
+   failed opener performs **zero** storage writes. Absent Web Locks → rejects with
+   `UnsupportedEnvironmentError` (no silent unprotected fallback). A retry after the owner closes **reloads
+   the latest committed record** while holding the lock (never a stale in-memory snapshot). **Close-failure
+   rule:** a failed final save during `close()` rejects with `CloseFailedError` (never a silent durable
+   close); the in-memory replica and `exportBytes()` survive so unsaved state stays exportable, and the lock
+   releases on dispose / page unload. Dropped the single-member `OpenOptions.concurrency?: "single-writer"`
+   field (NIT-3) and removed `SaveStateInfo.degraded` + the `role` field.
+2. **MEDIUM-2 — async checksum vs IndexedDB transaction lifetime + FNV ambiguity.** Standardized on
+   **SHA-256** (`crypto.subtle.digest`); removed all FNV-1a alternatives from the record section, U3, and
+   tasks. Stated the **ordering invariant**: capture the immutable snapshot bytes and **await the digest to
+   completion BEFORE** opening the `readwrite` transaction; the transaction body does **only synchronous**
+   work (read-compare `sequence`, then `put` precomputed bytes+checksum), never awaiting inside the active
+   transaction (which would raise `TransactionInactiveError`). Request/event ordering specified: issue
+   `objectStore.put`, then `transaction.oncomplete` resolves the save. The **whole** capture→hash→write
+   pipeline is single-flight so an older hashed snapshot can never overwrite a newer one (stale generation
+   dropped). A save is `saved` **only** on `transaction.oncomplete`, not request `onsuccess`; a
+   transaction abort/error leaves the session **visibly unsaved** with the live replica preserved. On-open
+   verification finishes the readonly transaction, THEN verifies bytes against the stored checksum and
+   decodes before exposing the ready session; a checksum/decode failure is a visible `InvalidRecordError`
+   and the corrupt record is preserved.
+3. **NIT-4 — `session.replica` read handle.** REQ-BP-004-5 now drops the `session.replica` example and
+   records the resolved decision: reads/exports via **explicit accessors**
+   (`get`/`has`/`getState`/`collection`/`subscribe`/`exportState`/`exportStateVector`/`exportDiff`); the raw
+   `Replica` is **deliberately not exposed** (no `session.replica`), so `replica.applyUpdate` is unreachable
+   through the session.
+4. **NIT-5 — copied `esc()` drift risk.** Documented ownership: the persistence package owns its **own**
+   `esc`/`SEP` codec for the IndexedDB `keyPath`; it does **not** import private SDK internals (the Kit's
+   `esc()` is module-private), and the copied codec is deliberately decoupled (IndexedDB keyPath only, never
+   interoperating with Kit records-map keys). `storage-key.test.ts` pins expected key strings so drift is
+   caught.
+5. **NIT-6 — reliance on `createReplica` throwing on bad seed.** Validation step 6 / new AC-BP-002-5a state
+   that `openReplica` wraps `createReplica` in `try/catch` (the Kit does not pre-validate seed bytes), maps
+   the decode throw to `InvalidRecordError`, cleans up the temporary replica/`Y.Doc` + IDB connection,
+   **releases the acquired Web Lock**, and **preserves** the corrupt stored record (no empty-state
+   replacement, no delete).
+6. **Corrupt-record preservation** reinforced across requirements and design: a failed checksum/decode or
+   seed-reject never auto-replaces with empty state and never deletes.
+
+### Planned regressions per correction (named, PENDING — none claimed passing)
+
+- **Correction 1 (concurrency):** `concurrent-same-key.spec.ts` — second same-key session cannot open
+  (`StorageInUseError`); two different replica keys open independently/concurrently; after owner flush+close
+  a retry restores the latest saved data (not stale); a failed acquisition performs zero storage writes
+  (stored record byte-unchanged); unsupported-capability env → `UnsupportedEnvironmentError`.
+- **Correction 2 (checksum/txn):** `save-flush.spec.ts` — prescribed save path succeeds with a real async
+  SHA-256 digest + real IndexedDB; a delayed/slow hash for an older generation cannot clobber a newer save;
+  a transaction abort surfaces `error` with the replica preserved.
+
+### Files changed in this correction (planning docs only)
+
+- `.kiro/specs/browser-persistence/requirements.md` — REQ-BP-002 (AC-BP-002-5/5a seed try-catch + corrupt
+  preservation), REQ-BP-003 (AC-BP-003-2a hash-before-txn, 3 abort=unsaved, 4 single-flight pipeline),
+  REQ-BP-004-5 (no `session.replica`), REQ-BP-005 (exclusive single-writer AC-BP-005-1..7), NFR-BP-006
+  (SHA-256 only), consolidated acceptance criteria summary.
+- `.kiro/specs/browser-persistence/design.md` — `OpenOptions`/`SaveStateInfo`/`PersistSession` interfaces
+  (dropped `concurrency`/`role`/`degraded`, added `exportBytes()` + close-failure contract), extended
+  `PersistenceError` code union (`UnsupportedEnvironmentError`/`StorageInUseError`/`CloseFailedError`),
+  SHA-256 checksum + save-ordering invariant, validation step-6 seed try/catch, rewritten "Concurrency"
+  (exclusive single-writer), updated invariant ownership + error table + `locks.ts` file note, storage-key
+  ownership/drift note, U3/U4 marked RESOLVED, and a filled-in "Responses to review findings" section.
+- `.kiro/specs/browser-persistence/tasks.md` — tasks 2.2 (SHA-256/ordering), 2.3 (new error codes), 4.1/4.2
+  (lock-before-restore + seed try/catch + cleanup/lock-release), 5.2 (hash-before-txn/single-flight),
+  5.4 (`CloseFailedError`), 6.2 (no raw `Replica`), 7.1/7.2/7.3 (exclusive single-writer), and e2e specs
+  9.8 / 9.10.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+### Verification commands and results (Windows PowerShell, from workspace root; planning only)
+
+| # | Command | Exit | Result |
+| --- | --- | --- | --- |
+| 1 | `git diff --check` | 0 | no whitespace/conflict errors |
+| 2 | `git status --short --branch` | 0 | `## feat/browser-persistence...`; only `.kiro/specs/browser-persistence/**` + modified `docs/progress.md`; untracked `.agents/` + untracked `.kiro/specs/browser-persistence/` |
+
+Grep confirmed removal across the spec dir of: the `reader` role / reader sessions, automatic ownership
+transfer, FNV-1a, `session.replica`, the single-member `concurrency` option, and any `degraded`/silent
+unprotected-writer fallback (only explicit negations remain). No dependencies installed; no build/test run;
+nothing staged, committed, pushed, reset, or deployed; `.agents/` and `origin` untouched.
+
+### Next action (browser-persistence correction)
+
+Reviewer re-checks the three spec docs against the 2 MEDIUM + 4 NIT findings and updates
+`.kiro/specs/browser-persistence/.review/`. On an `APPROVED` verdict, begin implementation per the task
+order. Nothing was committed, pushed, or deployed in this step.
+
+## browser-persistence implementation (feat/browser-persistence)
+
+IMPLEMENTED & VERIFIED. New separate package `@ghostsync/persist` (`packages/persist`) adds IndexedDB
+full-state persistence on top of the GhostSync Kit SDK. The Kit (`packages/kit`) was **not modified** — the
+persist package consumes only its public API. Baseline `d53452f`. Nothing was staged, committed, pushed, or
+deployed (the caller handles git); `.agents/` and `origin` were left untouched.
+
+### Implemented vs tested (unit) vs browser-verified — the honest distinction
+
+- **Implemented:** the full `@ghostsync/persist` source (identity/storage-key codec, record codec +
+  SHA-256 checksum + validation order, raw IndexedDB layer, exclusive Web Locks, the save-state machine,
+  routed import, guarded session/collection facade, close/dispose + recovery-only), a minimal Vite browser
+  harness, and both test suites.
+- **Tested (unit — fast feedback, NOT browser acceptance evidence):** 38 Node/Vitest tests on
+  `fake-indexeddb` + a **labeled** single-process Web Locks mock + the **real** `crypto.subtle` SHA-256.
+- **Browser-verified (acceptance evidence):** 15 Playwright tests in **real Chromium** against **real
+  IndexedDB + real SHA-256 + the real `navigator.locks` API**. Chromium: **Chrome for Testing
+  158.0.8127.18 (playwright chromium v1254)**; Playwright **1.65.0**.
+
+### Scope honesty (offline)
+
+This milestone proves **data persistence + editing in an already-loaded page with networking disabled**. The
+harness loads with networking ON (to fetch uncached assets), then the browser context is set OFFLINE for all
+edit/import/flush assertions; networking is re-enabled ONLY to (re)load uncached assets on a reload and
+disabled again afterwards. **Cold offline loading** (cached assets / service workers) is NOT implemented and
+NOT claimed — it is the next milestone.
+
+### Files changed (permitted set only)
+
+- `packages/persist/package.json` — `@ghostsync/persist`, private, ESM, scripts
+  `typecheck`/`test`/`build`/`build:harness`/`test:browser`; dep `@ghostsync/kit@workspace:*`.
+- `packages/persist/tsconfig.json`, `tsconfig.build.json` — strict, `lib ["ES2022","DOM","DOM.Iterable"]`,
+  NodeNext, src-only build (mirrors the Kit).
+- `packages/persist/vitest.config.ts`, `vitest.setup.ts`, `tests/support/web-locks-mock.ts` — Node unit env.
+- `packages/persist/vite.config.ts`, `playwright.config.ts` — harness build + Chromium acceptance config.
+- `packages/persist/src/{index,types,identity,record,errors,idb,locks,session}.ts` — the package source.
+- `packages/persist/tests/*.test.ts` + `tests/support/*` — 38 unit tests.
+- `packages/persist/harness/{index.html,harness.ts}` — the Vite browser harness.
+- `packages/persist/e2e/*.spec.ts` + `e2e/helpers.ts` — 15 Playwright acceptance tests.
+- `pnpm-lock.yaml` — regenerated by `pnpm.cmd install` for the new dev deps (single root lockfile).
+- `.kiro/specs/browser-persistence/{requirements,design,tasks}.md` — updated from PLANNED to IMPLEMENTED &
+  VERIFIED, reflecting the five implementation clarifications.
+- `docs/progress.md` — this section.
+- `.gitignore` — added `playwright-report/`, `test-results/`, `.playwright/` (generated browser artifacts;
+  `dist/` was already ignored, covering `harness/dist`).
+
+Root `package.json` and `pnpm-workspace.yaml` were NOT changed — the workspace already globs `packages/*`.
+No changes anywhere under `packages/kit` or `apps/`.
+
+### Dependency pins (exact; verified against the registry for Node 24 / pnpm 10.34.9)
+
+- `@playwright/test@1.65.0` (engines node>=20)
+- `fake-indexeddb@6.2.7` (engines node>=18)
+- `vite@8.3.6` (engines node ^20.19 || >=22.12 — satisfied by Node v24.14.0)
+- Reused from the Kit, unchanged: `typescript@7.0.2`, `@types/node@24.19.2`, `vitest@5.1.0`.
+- Runtime deps: none beyond `@ghostsync/kit` — IndexedDB + Web Locks + `crypto.subtle` are browser built-ins.
+
+### Key implementation decisions (the five clarifications)
+
+1. **close/dispose + collection lifecycle.** `dispose(): Promise<void>` is a first-class, idempotent,
+   non-durable discard. `close()` prevents mutation once closing begins, flushes edits accepted before
+   closing, and on success releases replica + IDB connection + Web Lock + listeners + page-lifecycle
+   handlers. On a failed final save it rejects `CloseFailedError` and enters a **recovery-only** state:
+   `exportBytes()` and reads keep working; `set`/`delete`/`applyUpdate`/`flush` AND `collection(adapter)`
+   (schema-meta write ⇒ mutation) reject `ClosedError`; the lock is retained until an explicit `dispose()`.
+   No queued save continuation writes after release.
+2. **Save ordering + truthful state.** Generation counter initialized from the validated stored sequence
+   (non-negative safe integer); current dirty revision tracked separately from the saving snapshot (an older
+   txn completing never reports the session saved while a newer edit is pending); SHA-256 computed on an
+   immutable `.slice()` copy BEFORE the readwrite txn; the txn body is synchronous read-compare-put via the
+   request callback, durable on `oncomplete`; a skipped stale write never falsely reports newer bytes saved;
+   `maxBytes` enforced before writes too; `onStateChange` exceptions isolated; failed save retries only on
+   the next flush/dirty (no tight loop).
+3. **Lock identity + cleanup.** Lock name `"ghostsync:lock:" + esc(dbName) + SEP + storageKey` includes both
+   dbName and storageKey; `ifAvailable:true` non-waiting, no silent unlocked fallback; acquisition/open
+   failure releases all acquired resources; a late IDB-open success after an earlier rejection closes the
+   abandoned connection.
+4. **Safe restore.** Validate shape before `bytes.length`; size bound before hashing/decoding; then version,
+   identity, checksum, sequence. Seeding goes through a FRESH PUBLIC `createReplica(documentId)` +
+   `applyUpdate({documentId, bytes})`, destroying that accessible replica if the apply rejects — no reliance
+   on a thrown constructor; the corrupt record is never auto-wiped/deleted.
+5. **Browser harness + honest offline.** Minimal Vite build/serve of the built package entries; offline
+   discipline as described above; same-key contention uses TWO PAGES in the SAME browser context + origin
+   (shared storage + locks). No faked offline reload; cold offline loading not claimed.
+
+### Verification commands and exit codes (Windows PowerShell, from workspace root; `$LASTEXITCODE`)
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd install` | 0 | installed new dev deps; regenerated `pnpm-lock.yaml` |
+| 2 | `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date |
+| 3 | `pnpm.cmd -F @ghostsync/kit build` | 0 | kit `dist/` emitted (consumed by persist + harness) |
+| 4 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict typecheck clean (src + tests + e2e + harness + config) |
+| 5 | `pnpm.cmd -F @ghostsync/persist test` | 0 | **6 files / 38 unit tests passed, 0 failed** (fake-indexeddb + labeled Web Locks mock + real SHA-256) |
+| 6 | `pnpm.cmd -F @ghostsync/persist build` | 0 | src-only `dist/` (`.js` + `.d.ts`) |
+| 7 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | Vite built `harness/dist` from built package entries |
+| 8 | `pnpm.cmd -F @ghostsync/persist exec playwright install chromium` | 0 | downloaded Chrome for Testing **158.0.8127.18** (chromium v1254) |
+| 9 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **15 Chromium acceptance tests passed, 0 failed** (real IndexedDB + SHA-256 + Web Locks) |
+| 10 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **42 files / 112 SDK tests passed, 0 failed — unchanged** |
+| 11 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings) |
+| 12 | `git status --short --branch` | 0 | only permitted paths changed; nothing committed |
+
+Browser acceptance WAS obtained (install + launch both succeeded). No screenshots were produced because all
+15 tests passed (Playwright `screenshot: "only-on-failure"`); the HTML report is written to
+`packages/persist/playwright-report/` and `test-results/` (both gitignored).
+
+### Test totals
+
+- **Unit (Vitest, fake-indexeddb — NOT browser evidence):** 38 passed / 38 (6 files).
+- **Browser (Playwright, real Chromium — acceptance evidence):** 15 passed / 15.
+- **SDK regression (`@ghostsync/kit`):** 112 passed / 112 — unchanged (no `.skip`/`.todo`/`.only`, no
+  weakened assertions, no edits to `packages/kit`).
+
+### Known limitations (deferred)
+
+- Cold offline loading (cached assets / service workers) is NOT implemented — the next milestone.
+- A checksum detects corruption; it does NOT authenticate the sender. Capsules are integrity-checked, not
+  authenticated.
+- Full-state snapshots only (no update log / compaction) — intentional for this milestone.
+- The Node Web Locks shim and `fake-indexeddb` are unit-feedback mocks, explicitly not acceptance evidence.
+- The transient-abort-then-retry case is exercised via a real pre-write `maxBytes` failure in Chromium (an
+  honest, observable save error); a fabricated mid-transaction abort is not simulated.
+
+### Next action (browser-persistence)
+
+Final code review writes `.kiro/specs/browser-persistence/.review/review.json`. On verdict `APPROVED` the
+implementation loop stops. Nothing was committed, pushed, or deployed in this step.
+
+## Milestone — browser-persistence review follow-up (four flush/skip/lifecycle/read-guard fixes)
+
+Branch `feat/browser-persistence` (HEAD `d53452f`). This round fixes four independent-review findings in
+`@ghostsync/persist`. The existing architecture is unchanged: full-snapshot IndexedDB persistence, serialized
+single-flight saving, exclusive non-waiting Web Locks, around the UNCHANGED `@ghostsync/kit` SDK. Nothing was
+committed, pushed, or deployed; the intentionally-staged review-ZIP index was left intact and these changes
+are unstaged working-tree edits on top of it.
+
+### The four fixes (each grounded in a reproduced defect)
+
+1. **Flush hangs — FIXED.** Reproduced: open with `maxBytes:4`, set an oversized value, await the first
+   (rejected) flush, let the save settle, call `flush()` again → the SECOND promise hung while state stayed
+   `error`. Root cause: the flush waiter was pushed AFTER `#scheduleSave()`, so a save that failed
+   SYNCHRONOUSLY (the pre-write `maxBytes` check runs before any `await`) rejected an empty waiter list and
+   the later `flush()` stranded. Fix (`src/session.ts`): register the waiter BEFORE triggering the save.
+   Every `flush()` now resolves or rejects; dirty data is retained. Regressions: repeated-failure flush (both
+   reject, no hang) and a SAME-SESSION retry after a transient failure that then succeeds.
+2. **Transactions finish before releasing ownership — FIXED.** Reproduced: `dispose()` resolved, then an
+   existing write transaction completed and flipped state to `saved` AFTER disposal (`db.close()` alone does
+   not abort/await an active transaction). Fix (`src/idb.ts` + `src/session.ts` + `src/locks.ts`):
+   `writeRecord` exposes the live transaction through an internal hook; terminal teardown marks the session
+   terminating (suppressing further state notifications and cancelling queued/hash continuations),
+   aborts/awaits the active transaction and the in-flight save BEFORE releasing the lock, and awaits the
+   ACTUAL `navigator.locks` release so an immediate same-key reopen can acquire it. Concurrent
+   `close()`/`dispose()` share one teardown promise and settle consistently without hanging. Regressions:
+   disposal during hashing, disposal during an in-flight/active transaction, immediate same-key reopen,
+   close/dispose overlap, and (Chromium) disposal during a REAL aborted transaction.
+3. **Skipped writes handled truthfully — FIXED.** Reproduced: force a newer stored sequence so `writeRecord`
+   returns `{ written: false }` (stale-generation skip); `flush()` then falsely resolved `saved` even though
+   the current bytes never reached disk, and reopening lost the edit. Fix (`src/session.ts`): `#saveOnce`
+   honors `result.written` — a skipped write surfaces an explicit `TransactionAbortError`, does NOT advance
+   the persisted marker, and preserves both the in-memory edit and the newer stored record (no clobber, no
+   false `saved`). Regression: a forced-conflict case driven through the session API (planted newer sequence)
+   asserting no false `saved` and that the edit + stored record survive.
+4. **Collection reads and subscriptions guarded — FIXED.** Previously collection READ routes
+   (`get`/`getResult`/`list`/`listResults`/`has`) bypassed the lifecycle and threw a raw destroyed-Yjs-doc
+   error after close. Fix (`src/session.ts`): the guarded collection's reads apply the session's readable
+   guard — including on a handle captured while open — returning a typed `ClosedError` after terminal
+   close/dispose; recovery-only reads stay allowed; `subscribe` is blocked after terminal disposal.
+   Regressions cover every read route, a handle captured before close, session reads/subscribe, and the
+   preserved recovery-only path.
+
+Test-only failure instrumentation (documented as test-only; NOT part of the shipped package surface): a
+scoped `crypto.subtle.digest` wrapper and a second raw IndexedDB connection in the Node unit file, and a
+one-shot real-transaction abort hook (`window.__gs.armWriteAbortOnce`) in the browser harness. No public
+production failure-injection API was added.
+
+### Files changed (permitted set only)
+
+- `packages/persist/src/session.ts` — flush-waiter ordering (fix 1), active-transaction tracking + terminal
+  abort/await ordering + awaited lock release + shared teardown promise + state-notification suppression
+  (fix 2), truthful skipped-write handling (fix 3), readable guard on collection reads + subscribe (fix 4).
+- `packages/persist/src/idb.ts` — `writeRecord` optional `onTransaction` hook exposing the live transaction
+  (internal plumbing for fix 2).
+- `packages/persist/src/locks.ts` — `AcquiredLock.release()` now returns a `Promise` that settles on ACTUAL
+  Web Locks release (fix 2).
+- `packages/persist/tests/flush-lifecycle.test.ts` — NEW: 10 deterministic Node regressions across all four
+  fixes.
+- `packages/persist/e2e/errors-lifecycle.spec.ts` — corrected the "retry" test to retry the SAME session via
+  a REAL aborted transaction; added a repeated-oversized-flush no-hang test.
+- `packages/persist/e2e/lifecycle-fixes.spec.ts` — NEW: real-Chromium regressions (dispose during real
+  aborted transaction, same-key reopen, concurrent close/dispose, skipped-write truthfulness, captured-handle
+  read/subscribe guards).
+- `packages/persist/harness/harness.ts` — test-only harness hooks (`armWriteAbortOnce`,
+  `captureIncidentCollection`, `probeCapturedReads`, `subscribeProbe`).
+- `.kiro/specs/browser-persistence/{requirements,design,tasks}.md` — reflect the corrected
+  flush/skip/lifecycle/read-guard behavior (AC-BP-003-4a, AC-BP-003-5, AC-BP-005-7c, AC-BP-005-7d).
+- `docs/progress.md` — this section.
+
+SDK (`packages/kit/**`), apps, dependencies, the lockfile, and root manifests were NOT modified.
+
+### Exact commands run (Windows PowerShell, from workspace root) + exit codes
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict `tsc --noEmit` clean |
+| 2 | `pnpm.cmd -F @ghostsync/persist test` | 0 | **48 unit tests passed** (7 files; 38 prior + 10 new) |
+| 3 | `pnpm.cmd -F @ghostsync/persist build` | 0 | `tsc -p tsconfig.build.json` emitted `dist` |
+| 4 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | Vite built `harness/dist` (55 modules) |
+| 5 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **21 Chromium tests passed** (7 spec files, 1 worker, ~17.9s) |
+| 6 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **112 SDK tests passed — unchanged** |
+| 7 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings; no conflict markers/whitespace errors) |
+| 8 | `git status --short --branch` | 0 | staged review-ZIP index intact; new/edited files appear as unstaged working-tree changes (`AM`/`??`) |
+
+### Test totals and environment (REPORTED — this run observed these)
+
+- **Persist unit:** 48 passed / 48 (Vitest 5.1.0 on `fake-indexeddb` + a labeled single-process Web Locks
+  mock + real `crypto.subtle`). FAST FEEDBACK — explicitly NOT acceptance evidence.
+- **Persist browser (acceptance):** 21 passed / 21 in real Chromium (real IndexedDB, real `crypto.subtle`
+  SHA-256, real `navigator.locks`).
+- **Chromium version:** `158.0.8127.18` (Chrome for Testing), via `@playwright/test` 1.65.0 / bundled
+  `chromium-1254` (verified by launching the browser and reading `browser.version()`).
+- **SDK regression:** `@ghostsync/kit` 112 passed / 112 — unchanged; no `.skip`/`.todo`/`.only`, no weakened
+  assertions, no edits to `packages/kit`.
+- **Node:** v24.14.0; **pnpm:** 10.34.9.
+
+### Reproduced-defect results
+
+- **flush-hang:** FIXED — repeated oversized flush rejects both times (no hang); same-session transient retry
+  resolves `saved` (unit + Chromium).
+- **dispose-ordering:** FIXED — no late write and no `saved` notification after terminal disposal; same-key
+  reopen acquires the lock; concurrent close/dispose settle consistently (unit + Chromium, incl. a real
+  aborted transaction).
+- **skipped-write truthful:** FIXED — a stale-generation skip surfaces an error, never a false `saved`; the
+  in-memory edit and the newer stored record both survive (unit + Chromium).
+- **read/subscription guards:** FIXED — collection reads (incl. a handle captured before close) and
+  `subscribe` return a typed `ClosedError` after terminal close/dispose; recovery-only reads preserved (unit
+  + Chromium).
+
+### Reported vs independent external verification
+
+The totals, exit codes, and Chromium version above are what THIS run observed on this machine (REPORTED
+evidence). They are NOT a substitute for INDEPENDENT external verification: the orchestrator/user should
+re-run the eight commands from the workspace root to confirm the exit codes, the 48/21/112 totals, and the
+Chromium version independently. No pass counts, version strings, or screenshots were fabricated.
+
+### Known limitations (deferred)
+
+- Cold offline loading (cached assets / service workers) remains the next milestone and is NOT claimed.
+- A checksum detects corruption; it does NOT authenticate the sender. Capsules are integrity-checked, not
+  authenticated.
+- Full-state snapshots only (no update log / compaction) — intentional for this milestone.
+- The Node Web Locks shim and `fake-indexeddb` are unit-feedback mocks, explicitly not acceptance evidence;
+  the real aborted-transaction recovery is exercised in Chromium via a test-only harness hook.
+
+## Milestone — browser-persistence review follow-up 2 (immediate-flush-retry / terminal-txn-event / onStateChange-guard / clean-checkout typecheck)
+
+Branch `feat/browser-persistence` (HEAD `d53452f`). This round fixes the three REMAINING independent-review
+findings in `@ghostsync/persist` plus a clean-checkout typecheck ordering fix. The existing architecture is
+unchanged: full-snapshot IndexedDB persistence, serialized single-flight saving, exclusive non-waiting Web
+Locks, around the UNCHANGED `@ghostsync/kit` SDK. Nothing was committed, pushed, or deployed; the
+intentionally-staged review-ZIP index was LEFT INTACT and these changes are unstaged working-tree edits on
+top of it (`AM`/`??`).
+
+### The fixes (each grounded in a reproduced defect)
+
+1. **Immediate flush retry still hung — FIXED.** Reproduced WITHOUT any inserted delay: open with
+   `maxBytes:4`, `set` an oversized value, `try { await flush() } catch {}`, then `await flush()` again with
+   NO `Promise.resolve()`/timer/polling between the two calls → the second promise hung while state stayed
+   `error`. (A scratch repro timed out at 5s before the fix.) Root cause: the second `flush()` arrived WHILE
+   the failed save worker (`#runSave`) was still unwinding — `#inFlight` was still set, so `flush()` declined
+   to schedule a new save, and the failed worker never serviced the newly-registered waiter, stranding it.
+   Fix (`src/session.ts`): COORDINATE flush-waiter settlement with save-worker cleanup — `#runSave`'s
+   `finally` clears `#inFlight` FIRST and then, if the session still owns its connection and is not tearing
+   down and a flush waiter's target is still unpersisted (`#hasPendingFlushWaiter()`), schedules a FRESH save
+   to service the retry. That fresh save re-attempts the write: it rejects again on a repeated failure
+   (bounded — the rejected waiter is removed, so no reschedule) or resolves on a transient failure that is
+   now gone. Every returned flush promise settles. Regressions (in `tests/flush-lifecycle.test.ts`, NO
+   microtask gap inserted): IMMEDIATE repeated oversized flush (both reject) and IMMEDIATE same-session retry
+   after a transient (forced-digest) failure that then resolves `saved`.
+2. **Await the ACTUAL terminal transaction event — FIXED.** `writeRecord` previously rejected the write
+   promise from `tx.onerror`, which can fire BEFORE `tx.onabort`; disposal could therefore resolve before the
+   transaction's TERMINAL event. Fix (`src/idb.ts`): request/transaction errors are RECORDED
+   (`request.onerror`/`put.onerror`/`get.onerror` capture the first error) but the write promise now SETTLES
+   ONLY on the transaction's terminal event — `tx.oncomplete` (success) or `tx.onabort` (terminal failure),
+   with the recorded error surfaced through `mapTxError`. `readRecord` was made consistent (settles on
+   `oncomplete`/`onabort`, not `onerror`). Because terminal teardown already aborts the active transaction
+   and `await`s the in-flight save, it now provably waits for the terminal event before releasing the Web
+   Lock and resolving `dispose`. Deterministic regression (unit + Chromium) disposes WHILE a REAL aborted
+   write transaction is the active write and asserts the ordering EXPLICITLY:
+   **`tx:abort` → `lock:release` → `dispose:resolve`** (observed in both the Node unit and real Chromium).
+   It also verifies an immediate SAME-KEY reopen succeeds (lock was released) and no late writes/`saved`
+   notifications after disposal. Instrumentation is TEST-SIDE only (a Node `tests/support/tx-abort-hook.ts`
+   real-IndexedDB abort + lock-release observer, and the browser harness's `armWriteAbortOnce` +
+   lock-release/lifecycle log) and documented as test-only; NO public production failure-injection API.
+3. **`onStateChange` guarded after terminal disposal — FIXED.** `onStateChange` previously accepted NEW
+   subscriptions after a terminal close/dispose. Fix (`src/session.ts`): `onStateChange` now calls
+   `#assertReadable()` first, so after terminal close/dispose registering a new save-state subscription
+   throws the typed `ClosedError` (consistent with the read/subscribe guards); recovery-only (after a FAILED
+   close) still allows registration. Regressions assert the typed `ClosedError` after both a terminal
+   `dispose()` and a terminal `close()` (unit), and after terminal disposal in real Chromium.
+4. **Clean-checkout typecheck no longer needs stale `dist` — FIXED.** The harness (included by
+   `tsconfig.json`) imports the package's BUILT public entry `@ghostsync/persist`, so `typecheck` previously
+   needed `packages/persist/dist` to already exist — a stale/missing `dist` broke a clean checkout. Fix
+   (`tsconfig.json`): added a `paths` mapping `"@ghostsync/persist": ["./src/index.ts"]` so typechecking
+   resolves the self-package import to SOURCE, independent of generated output. Verified by removing `dist`
+   entirely and running `typecheck` (exit 0). Typing is NOT weakened — no `any`, no loosened tsconfig, no
+   `@ts-ignore`; `strict`/`exactOptionalPropertyTypes`/`noUncheckedIndexedAccess` are unchanged, and the
+   check now runs against the real source types. The build (`tsconfig.build.json`) is unaffected: it excludes
+   `harness`/`tests` and `src` does not self-import `@ghostsync/persist`, so the mapping changes no emitted
+   output. (TypeScript 7.0.2 removed `baseUrl`; `paths` resolve relative to the tsconfig directory, so no
+   `baseUrl` was added.)
+
+### Files changed (permitted set only)
+
+- `packages/persist/src/session.ts` — flush-waiter/worker-cleanup coordination + `#hasPendingFlushWaiter()`
+  (fix 1); `onStateChange` readable guard (fix 3).
+- `packages/persist/src/idb.ts` — `writeRecord`/`readRecord` settle on the TERMINAL transaction event
+  (`oncomplete`/`onabort`), record request/tx errors without settling from `onerror`, `mapTxError` merges the
+  recorded error (fix 2).
+- `packages/persist/tsconfig.json` — `paths` self-type mapping to `./src/index.ts` (fix 4).
+- `packages/persist/tests/flush-lifecycle.test.ts` — rewrote the fix-1 regressions to IMMEDIATE retries (no
+  microtask gap); added the deterministic `tx-abort → lock-release → dispose-resolve` ordering regression
+  (fix 2); added `onStateChange`-after-terminal `ClosedError` assertions (fix 3).
+- `packages/persist/tests/support/tx-abort-hook.ts` (NEW, untracked) — TEST-ONLY real-IndexedDB one-shot
+  abort + Web Lock release observer for the deterministic Node ordering regression.
+- `packages/persist/harness/harness.ts` — TEST-ONLY lifecycle event log (tx abort + lock release),
+  `flushThenDisposeOrdered`, `onStateChangeProbe`, `lifecycleLog`/`resetLifecycleLog` harness hooks (fix 2/3).
+- `packages/persist/e2e/lifecycle-fixes.spec.ts` — added the Chromium ordering regression and the Chromium
+  `onStateChange`-after-dispose `ClosedError` test.
+- `.kiro/specs/browser-persistence/{requirements,design,tasks}.md` — reflect the corrected
+  immediate-flush-retry / terminal-transaction-event / `onStateChange`-guard behavior and the
+  build/typecheck order.
+- `docs/progress.md` — this section (all prior milestone history preserved above).
+
+SDK (`packages/kit/**`), apps, dependencies, the lockfile, and root manifests were NOT modified.
+
+### Exact commands run (Windows PowerShell, from workspace root) + exit codes (`$LASTEXITCODE`), IN ORDER
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd -F @ghostsync/kit build` | 0 | kit `dist/` emitted |
+| 2 | `pnpm.cmd -F @ghostsync/persist build` | 0 | `tsc -p tsconfig.build.json` emitted `dist` |
+| 3 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict `tsc --noEmit` clean (also verified with `dist` deleted → still 0) |
+| 4 | `pnpm.cmd -F @ghostsync/persist test` | 0 | **50 unit tests passed** (7 files; 48 prior + net new regressions) |
+| 5 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | Vite built `harness/dist` (55 modules) |
+| 6 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **23 Chromium tests passed** (9 spec files, 1 worker, ~15.6s) |
+| 7 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **112 SDK tests passed — unchanged** |
+| 8 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings; no conflict markers/whitespace errors) |
+| 9 | `git status --short --branch` | 0 | staged review-ZIP index INTACT; new/edited files appear as unstaged `AM`/`??` |
+
+### Test totals and environment (REPORTED — this run observed these)
+
+- **Persist unit:** 50 passed / 50 (Vitest 5.1.0 on `fake-indexeddb` + a labeled single-process Web Locks
+  mock + real `crypto.subtle`). FAST FEEDBACK — explicitly NOT acceptance evidence.
+- **Persist browser (acceptance):** 23 passed / 23 in real Chromium (real IndexedDB, real `crypto.subtle`
+  SHA-256, real `navigator.locks`).
+- **Chromium version:** `158.0.8127.18` (Chrome for Testing), via `@playwright/test` 1.65.0 / bundled
+  `chromium-1254` (verified by reading `chrome.exe` ProductVersion at
+  `…/ms-playwright/chromium-1254/chrome-win64/chrome.exe`).
+- **SDK regression:** `@ghostsync/kit` 112 passed / 112 — unchanged; no `.skip`/`.todo`/`.only`, no weakened
+  assertions, no edits to `packages/kit`.
+- **Node:** v24.14.0; **pnpm:** 10.34.9.
+
+### Reproduced-defect results
+
+- **immediate-flush-retry:** FIXED — with NO inserted delay, the immediate second flush promptly REJECTS
+  (repeated failure) and an immediate same-session retry after a transient failure RESOLVES `saved`; every
+  flush promise settles (unit + Chromium). A pre-fix scratch repro hung (5s timeout); post-fix it passes.
+- **terminal-transaction-event / disposal ordering:** FIXED — the write lifecycle settles on the terminal
+  `oncomplete`/`onabort` event; teardown waits for it; the OBSERVED order is
+  **`tx:abort` → `lock:release` → `dispose:resolve`** (asserted explicitly in both the Node unit and real
+  Chromium); immediate same-key reopen works; no late writes/notifications after disposal.
+- **onStateChange guard:** FIXED — registering a new `onStateChange` subscription after terminal
+  close/dispose returns the typed `ClosedError` (unit + Chromium).
+- **clean-checkout typecheck:** FIXED — `typecheck` is correct with no `dist` present (verified by deleting
+  `dist` then running it); typing not weakened.
+
+### Observed transaction / disposal event order
+
+Recorded by TEST-SIDE instrumentation (append-only log) in BOTH the Node unit
+(`tests/flush-lifecycle.test.ts` via `tests/support/tx-abort-hook.ts`) and real Chromium
+(`e2e/lifecycle-fixes.spec.ts` via the harness lifecycle log):
+
+```
+["tx:abort", "lock:release", "dispose:resolve"]
+```
+
+i.e. the write transaction's TERMINAL abort event fires, THEN the Web Lock is actually released, THEN
+`dispose()` resolves.
+
+### Reported vs independent external verification
+
+The totals, exit codes, observed event order, and Chromium version above are what THIS run observed on this
+machine (REPORTED evidence). They are NOT a substitute for INDEPENDENT external verification: the
+orchestrator/user should re-run the nine commands from the workspace root to confirm the exit codes, the
+50/23/112 totals, the event order, and the Chromium version independently. No pass counts, version strings,
+event orders, or screenshots were fabricated.
+
+### Known limitations (unchanged from the prior round)
+
+- Cold offline loading (cached assets / service workers) remains the next milestone and is NOT claimed.
+- A checksum detects corruption; it does NOT authenticate the sender. Capsules are integrity-checked, not
+  authenticated.
+- Full-state snapshots only (no update log / compaction) — intentional for this milestone.
+- The Node Web Locks shim and `fake-indexeddb` are unit-feedback mocks, explicitly NOT acceptance evidence;
+  the real aborted-transaction recovery and the terminal-event ordering are exercised in Chromium via
+  test-only harness instrumentation.
+
+## offline-assets milestone (feat/offline-assets)
+
+Branch `feat/offline-assets`, baseline `8312f50`. This milestone adds COLD OFFLINE loading of the
+PRODUCTION-built `@ghostsync/persist` harness via a BUILD-GENERATED Service Worker + Cache Storage precache.
+It does NOT change CRDT or persistence semantics (`packages/persist/src` is UNTOUCHED), adds NO dependency,
+edits NO lockfile, and does NOT build the application UIs. The harness stays a verification tool. Prior
+milestone history above is preserved.
+
+### PLANNED -> IMPLEMENTED -> TESTED
+
+- **PLANNED (spec):** `.kiro/specs/offline-assets/{requirements,design,tasks}.md` — a build-generated worker
+  + precache manifest, scope-relative registration, observable readiness, atomic install, scoped activation
+  cleanup, and the required real-Chromium acceptance matrix.
+- **IMPLEMENTED:** the Vite build-time generator, the generated Service Worker, harness registration +
+  observable readiness, and the harness DOM wiring (file list below).
+- **TESTED:** real Chromium acceptance (Playwright 1.65.0 / Chromium 158.0.8127.18) against the production
+  `vite preview` build with REAL service workers + REAL Cache Storage. 28 e2e pass (23 prior + 5 new). Unit
+  suites unchanged and green (112 kit, 50 persist). Evidence below is reported-this-run; a reviewer re-running
+  the ten commands is the independent external verification.
+
+### Worker filename + scope + cache-version strategy
+
+- **Worker file:** `sw.js` at the harness deployment root (served from `harness/dist/sw.js`); a TEST-ONLY
+  `sw-install-fail.js` sibling is emitted for the install-failure acceptance test only.
+- **Scope:** `./` (the harness deployment directory). All URLs resolve against `self.registration.scope`, so
+  there is NO hardcoded localhost port or absolute asset path and a subpath deployment works unchanged.
+- **Cache-name prefix (scoped):** `ghostsync-persist-harness-`; cache name = `${prefix}${cacheVersion}`.
+- **Cache version:** DETERMINISTIC — SHA-256 (first 16 hex) over the SORTED `url\u0000integrity` lines of
+  every precached entry, where `integrity` is a short SHA-256 of each emitted asset's bytes. Content-derived,
+  no timestamp/counter; a double build produced the SAME version (verified). Precache entries are DISCOVERED
+  from the actual emitted bundle (`generateBundle`, `order:"post"` so `index.html` is included) — hashed
+  filenames are never hardcoded. `sw.js`, `sw-install-fail.js`, and `precache-manifest.json` are excluded
+  from the precache. IndexedDB contents, sync messages, non-GET, arbitrary URLs, and external resources are
+  never cached.
+
+### Readiness / failure mechanism (observable DOM signal)
+
+`window.__gsOffline` exposes `{ state, ready, error, cacheVersion, cacheName, updateAvailable, applyUpdate }`,
+mirrored to `#offline-status` and `<html data-offline-state=... data-offline-ready=...>`. States:
+`registering -> installing -> (waiting | ready | failed)`, plus `unsupported` for an insecure/unsupported
+context. `ready === true` ONLY when the page has a controlling worker AND a bounded
+`GHOSTSYNC_PRECACHE_STATUS` round-trip reports the precache COMPLETE — never merely because registration
+resolved. A worker that goes `redundant` without controlling the page (atomic install reject) => `failed`.
+Tests await this signal (no arbitrary sleep). Update lifecycle: no automatic `skipWaiting`; a new worker
+WAITS (`updateAvailable`/`waiting`) and takes control on next navigation after clients release OR via the
+explicit `__gsOffline.applyUpdate()` prompt, so old pages never mix with new assets.
+
+### Files changed (permitted set only)
+
+- `.kiro/specs/offline-assets/requirements.md`, `design.md`, `tasks.md` (new).
+- `packages/persist/scripts/sw-precache-plugin.ts` (new) — build-time generator.
+- `packages/persist/harness/sw-register.ts` (new) — registration + observable readiness.
+- `packages/persist/harness/harness.ts` (modified) — calls `initOfflineReadiness()`; TEST-ONLY `showRestored`.
+- `packages/persist/harness/index.html` (modified) — `#offline-status` + `#restored-data` panels.
+- `packages/persist/vite.config.ts` (modified) — registers `swPrecachePlugin()` (build-only).
+- `packages/persist/e2e/helpers.ts` (modified) — `awaitOfflineReady` + `readOfflineState`.
+- `packages/persist/e2e/offline-assets.spec.ts` (new) — 5 real-Chromium acceptance tests.
+- `.gitignore` (modified) — clarifying comment; generated SW/manifest are under the already-ignored `dist/`.
+- `docs/progress.md` (this section).
+
+NOT touched: `packages/kit/**`, `packages/persist/src/**`, `apps/**`, `package.json`, `playwright.config.ts`
+(no change needed), the lockfile, root manifests, and `.agents/`.
+
+### Verification commands + REAL exit codes (Windows PowerShell, from workspace root, in order)
+
+| # | Command | Exit code | Result |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd install --frozen-lockfile` | 0 | lockfile up to date; already up to date |
+| 2 | `pnpm.cmd -F @ghostsync/kit build` | 0 | `dist/` emitted |
+| 3 | `pnpm.cmd -F @ghostsync/persist build` | 0 | `dist/` emitted |
+| 4 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict typecheck clean |
+| 5 | `pnpm.cmd -F @ghostsync/persist test` | 0 | 7 files / **50 tests** passed, 0 failed |
+| 6 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | emitted `index.html`, `sw.js`, `sw-install-fail.js`, `precache-manifest.json`, `assets/index-<hash>.js` |
+| 7 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **28 passed / 0 failed** (23 prior + 5 new offline) |
+| 8 | `pnpm.cmd -F @ghostsync/kit test` | 0 | 42 files / **112 tests** passed (8 properties) |
+| 9 | `git diff --check` | 0 | no whitespace/conflict errors (cosmetic LF->CRLF warnings only) |
+| 10 | `git status --short --branch` | 0 | only permitted files changed; `.agents/` untouched |
+
+- **Unit totals:** kit **112**, persist **50** (both unchanged and green).
+- **Browser totals:** **28 passed / 0 failed**.
+- **Chromium:** 158.0.8127.18 (Playwright 1.65.0 bundled chromium-1254), real service workers + real Cache
+  Storage over the production `vite preview` build.
+
+### Offline-navigation results (reported this run)
+
+- **Cold boot + restore (promised):** clean context -> online -> `__gsOffline.ready === true` -> create legacy
+  (`status`) + structured (`incident i1`) + imported-remote (`a`) data -> flush -> `context.setOffline(true)`
+  -> reload WITHOUT re-enabling -> shell boots (`__gs.ready`), `__gsOffline.ready` again, and `status=triage`,
+  `incident={id:i1,title:Spill,priority:1}`, remote `a=1` all RESTORE. Then an OFFLINE edit
+  (`status=resolved-offline`) + flush + OFFLINE reload -> the latest edit survived. PASS.
+- **`fromServiceWorker()` asserts:** the document (navigation) response AND the `assets/index-<hash>.js`
+  response both returned `fromServiceWorker() === true` on the offline reload. PASS.
+- **New page, same offline profile:** a second page in the same context cold-navigated offline (SW-served),
+  saw `StorageInUseError` while the first page held the Web Lock, then reopened the SAVED replica
+  (`k=held-by-first`) after the first page released the lock. PASS.
+- **Uncached fresh profile (NOT promised):** a brand-new context set offline BEFORE any visit honestly FAILED
+  to load the harness (navigation error / harness not booted). PASS — first-ever offline visit is not promised.
+- **Install-failure not ready:** registering the REAL `sw-install-fail.js` (its install genuinely rejects) ->
+  the harness reported `state==="failed"`, `ready===false` — never offline-ready. PASS.
+- **Scoped cleanup preserves others:** seeded an unrelated cache (`unrelated-app-cache-v1`), a stale
+  prefixed cache (`ghostsync-persist-harness-staleversion00`), and a persisted replica; triggered scoped
+  cleanup -> the stale prefixed cache was removed while the unrelated cache (and its body `keep-me`) AND the
+  IndexedDB replica (`survive=yes`) BOTH survived. PASS.
+- **Screenshot (real):** captured in the e2e run at
+  `packages/persist/playwright-report/offline-restored.png`
+  (absolute: `C:\Users\ahmad\ghostsync\packages\persist\playwright-report\offline-restored.png`), showing the
+  OFFLINE-loaded harness with `window.__gs installed`, `offline-ready (cache ...)`, and
+  `restored-data: status=resolved-offline (OFFLINE reload, SW-served)`. This artifact lives under the
+  gitignored `playwright-report/` and is regenerated on each `test:browser` run.
+
+### Honesty / evidence boundary
+
+No `route.fulfill`, injected page HTML, or mocked service worker was used to manufacture offline success.
+Offline is real (`context.setOffline(true)`); SW delivery is proven with `response.fromServiceWorker()`. The
+install-failure test uses a REAL worker whose install rejects (the browser discards it). Failure-injection
+cases are in a clearly separated `offline negative cases` describe block. The numbers above are
+reported-this-run from actual executions; a reviewer re-running the ten commands is the independent external
+verification.
+
+### Known limitations
+
+- **First-online-visit requirement:** a profile must visit the harness ONCE with networking available to
+  install the worker and populate the precache. A FIRST-EVER visit offline is NOT supported (asserted).
+- **Cache eviction / cleared storage:** browser storage pressure or a user clearing site data evicts the
+  precache; the next load then needs networking again (same as the first-visit requirement).
+- **localhost/HTTPS:** service workers require a secure context; `file://` or an insecure origin reports
+  `unsupported` and offers no offline loading.
+- A content hash DETECTS corruption; it does NOT authenticate the origin of cached assets.
+- This milestone caches ASSETS only — CRDT, persistence semantics, capsules, QR, and app UIs are unchanged
+  and out of scope.
+
+### Next action (offline-assets)
+
+Proceed to ONE final code review of this implementation. Nothing was pushed, reset, or amended; work is
+committed on `feat/offline-assets` with the evidence above recorded in the commit message.
+
+## offline-assets — SCREENSHOT EVIDENCE ONLY (feat/offline-assets, working-tree only)
+
+**Scope: screenshot evidence only.** This pass fixes HOW the offline cold-boot acceptance screenshot is
+captured and attached, and copies the real captured artifact to the Windows Desktop. It does NOT change
+CRDT/persistence/SDK logic, app code, dependencies, the lockfile, or `package.json`. HEAD remains
+`a376096` (unchanged); all edits are UNSTAGED working-tree changes — nothing was staged, committed,
+amended, reset, or pushed. The honest browser-test history above is retained and not rewritten.
+
+### Observed root cause of the earlier missing standalone screenshot (confirmed, not guessed)
+
+The test previously called `page.screenshot({ path: "playwright-report/offline-restored.png" })`. That
+RELATIVE path resolves against the Playwright test-process cwd (`packages/persist`), i.e. into the SAME
+`playwright-report/` directory that the HTML reporter manages
+(`reporter: [["list"], ["html", { outputFolder: "playwright-report" }]]` in
+`packages/persist/playwright.config.ts`). The config sets no custom `outputDir` (default is
+`test-results/`). After a full run I observed `packages/persist/playwright-report/` contained ONLY
+`index.html` and `packages/persist/test-results/` contained only `.last-run.json` — the standalone
+`offline-restored.png` was absent everywhere under `packages/persist` (including gitignored paths). The
+HTML reporter rebuilds/overwrites its `outputFolder` when it writes the report at run end, so a stray
+PNG written into that same folder does not survive. The write targeted a reporter-managed location
+rather than a Playwright-managed per-test output path, so the artifact was not durable.
+
+### New capture/attach mechanism
+
+- The offline cold-boot test (`previously-initialized profile boots + restores ...`) now receives
+  `testInfo` and captures via Playwright's MANAGED output path:
+  `const file = testInfo.outputPath("offline-restored.png"); await page.screenshot({ path: file, fullPage: true });`
+- It then ATTACHES the real PNG to the report:
+  `await testInfo.attach("offline-restored", { path: file, contentType: "image/png" });`
+- The capture happens ONLY AFTER the test's assertions confirm, in order: (a) networking remains disabled
+  — an in-page `fetch` to a bogus path must reject (`offline`), and the context is never re-enabled;
+  (b) the offline reload navigation + JS asset were SERVICE-WORKER-served
+  (`response.fromServiceWorker() === true` for both, asserted earlier in the same test); and (c) the saved
+  LEGACY (`status`, remote key `a`) and STRUCTURED (`incident i1`) data actually restored — the test
+  reopens the saved replica once more (still offline) and asserts
+  `legacyStatus === "resolved-offline"`, `legacyRemote === 1`,
+  `incident === { id: "i1", title: "Spill", priority: 1 }` before the screenshot is taken.
+
+### Harness diagnostic panel: NOT added (existing panel reused)
+
+No new harness panel was added. The harness already renders restored values visibly in the
+`#restored-data` DOM node via `window.__gs.showRestored(...)`. The test now populates that node from the
+REAL session read-back (the live `get`/`getIncident` values of the just-reopened replica), so the
+screenshot visibly shows the genuine restored legacy + structured values — no hardcoded success data,
+no fabricated overlay, no app UI. `packages/persist/harness/**` was therefore not modified and no harness
+rebuild was required.
+
+### Resolved artifact paths + sizes (reported-this-run)
+
+- Captured PNG (Playwright per-test output dir):
+  `C:\Users\ahmad\ghostsync\packages\persist\test-results\offline-assets-offline-col-bb88a-ives-another-offline-reload-chromium\offline-restored.png`
+  — **25443 bytes**, PNG signature first 8 bytes `89 50 4E 47 0D 0A 1A 0A` (valid).
+- Desktop copy (resolved via `[Environment]::GetFolderPath('Desktop')` = `C:\Users\ahmad\OneDrive\Desktop`,
+  a OneDrive-redirected Desktop): `C:\Users\ahmad\OneDrive\Desktop\ghostsync-offline-restored.png`
+  — **25443 bytes**, PNG signature `89 50 4E 47 0D 0A 1A 0A` (valid). This is a byte-for-byte copy of the
+  real captured PNG from the test output dir, not a regenerated/placeholder image. The rendered
+  `#restored-data` line reads:
+  `legacy status=resolved-offline | legacy a=1 | incident i1={id:i1, title:Spill, priority:1} (OFFLINE, SW-served)`.
+
+### Files changed (permitted set only)
+
+- `packages/persist/e2e/offline-assets.spec.ts` — `testInfo` param; managed `outputPath` capture;
+  `testInfo.attach`; assertion-gated timing (offline / SW-served / restored read-back) before capture.
+- `docs/progress.md` — this section.
+
+(`packages/persist/harness/**` was NOT changed; no other files were touched.)
+
+### Verification commands and results (Windows PowerShell, from workspace root; `$LASTEXITCODE`)
+
+| Command | Exit code | Result (reported-this-run) |
+| --- | --- | --- |
+| `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict typecheck clean |
+| `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **28 passed** (14.2s); no `.skip`/`.only`/`.todo`, no weakened assertions, no timeout changes |
+| `git diff --check` | 0 | clean (only a cosmetic LF->CRLF warning on the spec file) |
+| `git status --short --branch` | 0 | on `feat/offline-assets`; only ` M packages/persist/e2e/offline-assets.spec.ts` tracked-modified; `.agents/` and `.kiro/specs/offline-assets/.review/` untracked (left untouched); nothing staged |
+| `git log -1 --oneline` | 0 | still `a376096` (HEAD unchanged) |
+
+`build:harness` was intentionally NOT run — harness contents did not change. The screenshot
+file-existence / nonempty / PNG-signature check and the Desktop-copy verification were performed via
+PowerShell and are reported above.
+
+### Honesty boundary
+
+The 28/28 pass count, the resolved paths, the byte sizes, and the PNG signatures are **reported-this-run**
+from actual executions on this machine (Chromium ran successfully; nothing was fabricated). Independent
+external verification is a reviewer re-running the commands above and re-reading the captured + Desktop
+PNGs. A content/PNG signature DETECTS a valid-PNG artifact; it does not by itself authenticate provenance.
+
+### Next action (offline-assets screenshot evidence)
+
+Proceed to ONE review of this screenshot-evidence pass (handshake under
+`C:\Users\ahmad\ghostsync\.review-artifacts\offline-screenshot-review.json`). Nothing was committed,
+pushed, reset, or amended; HEAD remains `a376096` and all edits remain unstaged working-tree changes.
+
+## offline-assets — two defect fixes (scope-specific cache + restricted navigation) (feat/offline-assets)
+
+A bounded defect-fix pass on the offline-assets milestone of `@ghostsync/persist`. Two independently
+reproduced defects in the build-generated Service Worker were fixed, two real-Chromium regressions were
+added, and the full verify sequence was run on this machine. The production harness behavior is otherwise
+PRESERVED (build-generated SW, content-derived precache version, scope-relative URLs, readiness handshake,
+real offline boot, IndexedDB restoration, managed `offline-restored.png` via `testInfo.outputPath` +
+`testInfo.attach`). No `packages/kit/**`, `packages/persist/src/**`, apps, dependencies, lockfile, or
+`package.json` changes. **Nothing was committed, pushed, reset, amended, or unstaged.** HEAD remains
+`a376096`; the four pre-existing STAGED entries are untouched (my edits layer as additional UNSTAGED
+working-tree changes). `.agents/` left untouched.
+
+### The two defects and the fixes
+
+- **FIX 1 — cache ownership was build-content-only, so two deployments of the SAME build under DIFFERENT
+  paths on one origin would COLLIDE on one cache namespace.** The cache name is now specific to the actual
+  registration SCOPE: `ghostsync-persist-harness-` + `self.registration.scope` PATHNAME + `::` +
+  content-derived version. Two deployments under different paths on the same origin therefore own SEPARATE
+  cache namespaces even with IDENTICAL build contents; the content-derived version still distinguishes
+  old-vs-new WITHIN a scope. A shared `cleanupThisScope()` deletes ONLY older caches whose name begins with
+  THIS exact scope prefix, on BOTH activation and the explicit `GHOSTSYNC_CLEANUP` message — never another
+  scope's caches, never unrelated caches, never IndexedDB, never another registration. The TEST-ONLY
+  failing worker's cache name was updated to the same scope-specific form for consistency.
+- **FIX 2 — the navigation fallback could serve the cached HTML shell too broadly.** The shell is now
+  returned ONLY for the DOCUMENTED navigation routes (the scope-relative deployment root `new URL("",
+  scope)` and `index.html`). Any other navigation path — INCLUDING a missing-`.js` path requested as a
+  navigation — is NOT served the shell: it falls through to the network, so offline it fails VISIBLY (a
+  real miss, not a masked 200-HTML). Normal precached ASSET delivery is preserved (known hashed assets
+  still serve cache-first from the SW).
+
+### Regressions added (real Chromium, in `e2e/offline-assets.spec.ts`)
+
+- **A — scope isolation (AC-OA-005-8).** Deploy the SAME built harness under two sub-paths on one origin
+  (`/deploy-p1/`, `/deploy-p2/`); assert the two scopes report DIFFERENT scope-specific cache names and
+  both caches exist; run cleanup/activation in P1 (via `GHOSTSYNC_CLEANUP`, awaiting
+  `GHOSTSYNC_CLEANUP_DONE`); assert P2's cache SURVIVES and P2 can still boot offline (document + JS asset
+  both `response.fromServiceWorker() === true`) and still reports its own unchanged cache name.
+- **B — restricted navigation (AC-OA-005-9).** Offline, a REAL navigation (`page.goto`, genuine
+  `mode:"navigate"`) to an unknown path and to a missing-`.js` path do NOT boot the harness shell and fail
+  at the network (no masked HTML); after returning to the documented root (served by the SW), a KNOWN
+  precached asset still serves from the SW cache (`fromServiceWorker() === true`). (Scripted `fetch` cannot
+  use `mode:"navigate"` — it throws — so the regression uses actual navigations.)
+- The existing scoped-cleanup test (AC-OA-005-6) was updated to seed its stale cache under the
+  scope-specific prefix (derived from the SW-reported active cache name) so it still exercises same-scope
+  cleanup after FIX 1 — intent unchanged, no weakened assertion.
+- The existing offline root/index boot + restored-data (legacy + structured) assertions and the managed
+  `offline-restored.png` capture + `testInfo.attach` are PRESERVED and still pass.
+
+### Multi-scope serving
+
+The harness is built with Vite `base: "./"` (all referenced URLs relative). A new dependency-free Node
+static server `packages/persist/e2e/static-multiscope-server.mjs` serves the built `harness/dist` at the
+origin ROOT (`/`, used by all existing tests) AND under `/deploy-p1/` and `/deploy-p2/` on the same origin,
+replacing `vite preview` in `playwright.config.ts` webServer (`vite preview` serves only the root). A
+worker registered at `/deploy-pN/sw.js` can only control `/deploy-pN/` (the browser's scope restriction),
+which — with the scope-specific cache name — is exactly the isolation FIX 1 guarantees. A missing file
+returns an honest 404 (never a fallback to `index.html`), matching the SW's no-catch-all policy.
+
+### Files changed (permitted set only)
+
+- `packages/persist/scripts/sw-precache-plugin.ts` — FIX 1 (scope-specific `scopePrefix()`/`cacheName()` +
+  shared `cleanupThisScope()` used by activate and `GHOSTSYNC_CLEANUP`; status/install use `cacheName()`;
+  failing-worker cache name updated) + FIX 2 (`documentedNavUrls()`; navigation shell served only for those
+  routes).
+- `packages/persist/e2e/offline-assets.spec.ts` — the two new regressions (A, B) + updated stale-cache
+  seed name in the existing cleanup test. (This file is also one of the pre-existing STAGED entries, so it
+  now shows BOTH a staged modification and these additional unstaged modifications — expected.)
+- `packages/persist/e2e/static-multiscope-server.mjs` (new, untracked) — dependency-free multi-scope static
+  server.
+- `packages/persist/playwright.config.ts` — webServer uses the multi-scope server (replaces `vite
+  preview`); `GHOSTSYNC_HARNESS_PORT` env.
+- `.kiro/specs/offline-assets/{requirements,design,tasks}.md` — AC-OA-003-2/003-3 (documented-route nav),
+  AC-OA-004-3/004-4 (scope-specific cache ownership), new AC-OA-005-8/005-9, design cache-naming + fetch +
+  multi-scope-serving sections + AC→test mapping, tasks T11–T16.
+- `docs/progress.md` — this section.
+
+No `packages/persist/harness/**` change was needed (the existing `#restored-data` panel and readiness
+wiring are reused). No `packages/persist/src/**`, `packages/kit/**`, apps, dependency, lockfile, or
+`package.json` change.
+
+### Verification commands and results (Windows PowerShell, from workspace root; exit = `$LASTEXITCODE`) — reported-this-run
+
+| # | Command | Exit | Result (reported-this-run) |
+| --- | --- | --- | --- |
+| 1 | `pnpm.cmd -F @ghostsync/kit test` | 0 | **42 files / 112 tests passed, 0 failed** |
+| 2 | `pnpm.cmd -F @ghostsync/persist typecheck` | 0 | strict typecheck clean (src + tests + harness + e2e + config) |
+| 3 | `pnpm.cmd -F @ghostsync/persist test` | 0 | **7 files / 50 tests passed, 0 failed** |
+| 4 | `pnpm.cmd -F @ghostsync/persist build` | 0 | `dist/` emitted (package build) |
+| 5 | `pnpm.cmd -F @ghostsync/persist build:harness` | 0 | harness `dist/` emitted incl. regenerated `sw.js` + `precache-manifest.json` |
+| 6 | `pnpm.cmd -F @ghostsync/persist test:browser` | 0 | **30 passed** (17.7s), 0 failed; +2 vs the prior 28 (the two new regressions). No `.skip`/`.only`/`.todo`, no weakened assertions, no timeout increases |
+| 7 | `git diff --check` | 0 | clean (only cosmetic LF→CRLF warnings) |
+| 8 | `git status --short` | 0 | HEAD-staged entries intact; my edits unstaged; `static-multiscope-server.mjs` untracked; `.agents/` left untouched |
+| 9 | `git log -1 --oneline` | 0 | still `a376096` (HEAD unchanged) |
+
+Chromium: Playwright **1.65.0** (Chrome for Testing 158, per the verified environment). Both new
+regressions PASS: scope-isolation cleanup (test 18) and unknown/missing-`.js` navigation (test 19).
+
+### Screenshot evidence (preserved)
+
+The managed offline screenshot is still captured and attached by the existing offline-boot test:
+`C:\Users\ahmad\ghostsync\packages\persist\test-results\offline-assets-offline-col-bb88a-ives-another-offline-reload-chromium\offline-restored.png`
+— **25443 bytes**, PNG signature first 8 bytes `137 80 78 71 13 10 26 10` (valid). The capture path +
+`testInfo.attach` were not regressed.
+
+### Honesty boundary
+
+The 112 / 50 / 30 counts, exit codes, both regression outcomes, the Chromium version, and the screenshot
+path/size/signature are **reported-this-run** from actual executions on this machine (Chromium ran
+successfully; nothing was fabricated). Independent external verification is a reviewer re-running commands
+1–9 above on a clean checkout. A content/PNG-signature check DETECTS a valid artifact; it does not by
+itself authenticate provenance. A checksum detects corruption; it does not authenticate the sender.
+
+### Next action (offline-assets defect fixes)
+
+Proceed to ONE focused review of this defect-fix diff. The loop stops when
+`.kiro/specs/offline-assets/.review/final-review.json` records verdict `APPROVED`. Nothing was committed,
+pushed, reset, amended, or unstaged; HEAD remains `a376096` and all edits (besides the pre-existing staged
+entries) remain unstaged working-tree changes.
+
+## file-capsules spec planning (feat/file-capsules)
+
+Planning-only milestone for the file-transfer tier: a reusable `@ghostsync/capsule` package (new
+`packages/capsule`) that encodes a replica's FULL-STATE update into a versioned, integrity-checked FILE
+CAPSULE and decodes/validates/imports it back. **PLANNED ONLY — not implemented.** No code, dependencies,
+builds, tests, commits, or pushes were performed. Only three spec documents were created and this progress
+file was appended. Branch `feat/file-capsules`; baseline commit `491e55e`
+("fix: isolate offline caches by scope and preserve screenshot evidence"). Working tree clean except
+untracked `.agents/` and `.review-artifacts/`, both **left untouched**. `origin` untouched. `pnpm-workspace.yaml`
+already globs `packages/*`, so a new `packages/capsule` is picked up with no root config change.
+
+### Real APIs read before quoting (confirmed against source, not assumed)
+
+- `packages/kit/src/{types,replica,adapter,index}.ts` — `createKit().createReplica(documentId, seedBytes?)`,
+  `Replica.exportState(): TransportUpdate { documentId; kind:"full"; bytes }`, `applyUpdate(unknown):
+  ApplyOutcome` (`ok | documentIdMismatch | invalidCarrier | malformedUpdate`), `getState(): State`,
+  `SchemaIdentity { app; schemaVersion; entityType }` recorded in-doc by the Kit's collection meta.
+- `packages/persist/src/{session,types,record,errors,index}.ts` — `openReplica`/`PersistSession` facade
+  (reads + routed `applyUpdate` import + save-state machine + `flush()` + `close`/`dispose` + `exportBytes()`),
+  `PersistenceError.code` set (`QuotaExceededError`/`TransactionAbortError`/`CloseFailedError`/`ClosedError`/…),
+  `DEFAULT_MAX_BYTES` (8 MiB), `sha256Hex` via `crypto.subtle`, and `session.identity.documentId`.
+- `packages/persist/harness/**` + `e2e/**` + root/package configs — the existing Playwright/Vite harness
+  (`window.__gs`, `armWriteAbortOnce`, real IndexedDB/crypto/locks) the capsule download/import controls extend,
+  and the kit/persist conventions a new ESM src-only strict-TS package follows.
+
+### Scope: file-capsules = PLANNED (full-state first; differential DEFERRED)
+
+Full-state capsules only this version; state-vector/diff capsules, QR, schema editor, encryption, compression,
+and network sync are deferred. The codec is a pure, browser-safe function of bytes; the browser file-picker/
+download wiring lives ONLY in the existing Persist harness, not in the shipped package and not as app UI.
+
+### The three files created
+
+- `.kiro/specs/file-capsules/requirements.md` — Summary + scope boundary + assumptions; REQ-CAP-001..010;
+  NFR-CAP-001..004; 20 numbered EARS acceptance criteria; Out of Scope; a requirement→AC→test traceability
+  table. Honest limitations stated: checksum is integrity not authenticity; size limits bound memory but do
+  not stop in-bounds CPU/memory attacks.
+- `.kiro/specs/file-capsules/design.md` — chosen format, locked stack, confirmed Kit/Persist signatures,
+  the concrete TypeScript public API, buffer-ownership rules, the validation pipeline, the error table,
+  per-input validation rules, invariants/owning layers, files-to-create, dependency/build order, testability,
+  edge cases, a decision-summary table, and two genuinely-open decisions (U1 flush-gated `persisted`;
+  U2 cap defaults) each with a recommendation.
+- `.kiro/specs/file-capsules/tasks.md` — ordered pending `- [ ]` checklist (scaffold → format/errors →
+  encode/decode → import helpers → unit/property tests → harness+Chromium e2e → final verification), the
+  requirement→test mapping, and the EXACT future Windows PowerShell verification commands (NOT run).
+
+### Chosen format (brief) + checksum coverage + validation order
+
+- **Format:** a small binary container — 11-byte header `[ magic "GSCAP\0" (6) | uint8 formatVersion=1 |
+  uint32-BE metaLength (4) ]` + a length-prefixed UTF-8 JSON metadata section
+  `{ formatVersion, app, documentId, updateByteLength, sha256, createdAt }` + the RAW full-state update bytes.
+  Extension `.gscap`; media type `application/vnd.ghostsync.capsule`; big-endian length fields. Chosen over
+  all-JSON+base64 (≈33% bloat, re-encodes the largest region) and an all-binary struct (metadata not
+  inspectable, brittle to evolve): the hybrid keeps metadata human-inspectable while storing update bytes
+  verbatim.
+- **Checksum coverage (exact):** lowercase-hex SHA-256 over the contiguous region from **offset 7 to the end**
+  (the `metaLength` prefix + metadata JSON + update bytes, in that order), with the metadata `sha256` field
+  serialized as 64 ASCII `"0"` placeholders during hashing and then overwritten in place with the real digest
+  (fixed 64-byte width ⇒ no re-layout). Magic+version (offsets 0..6) are excluded because they are the pre-
+  checksum framing. Integrity only — it does NOT authenticate the sender.
+- **Validation order (cheapest/most-protective first; each failure a distinct typed `CapsuleError`, no
+  mutation):** raw-size bound → magic+version → length framing → metadata parse + field validation
+  (incl. `updateByteLength === actual`) → decoded-update size bound → SHA-256 recompute+compare → app identity
+  → documentId identity (vs target) → Kit `applyUpdate` (map non-ok `ApplyOutcome` to `SdkRejection`).
+  Only the final step mutates, so every earlier rejection trivially leaves the target unchanged.
+
+### Public API proposal (planned signatures)
+
+`encodeCapsule(input: { app; documentId; update: Uint8Array; createdAt? }): Uint8Array`;
+`decodeCapsule(bytes, opts?): DecodedCapsule` (throws `CapsuleError`);
+`importCapsuleInto(target: { documentId; applyUpdate }, bytes, expected: { app }, opts?): ImportResult`;
+`importCapsuleIntoPersisted(target, documentId, bytes, expected, opts?): Promise<PersistImportResult>` where a
+save failure resolves `{ applied:true, persisted:false, saveError }` (not a throw) and preserves the in-memory
+data. Typed error union `CapsuleError.code ∈ { UnsupportedVersion, Malformed, AppIdentityMismatch,
+DocumentIdentityMismatch, OversizedRaw, OversizedDecoded, ChecksumMismatch, SdkRejection }`. Buffer ownership:
+encode copies the input update and retains no reference; decode returns copies (not subarray views); returned
+buffers are caller-owned. Runtime dep is `@ghostsync/kit` (`workspace:*`) only; SHA-256 via `crypto.subtle` in
+browser-safe `src` (no `node:` imports); no new runtime dependency and no lockfile change proposed as required
+(the lockfile touch is flagged for the implementation task that adds the capsule dep to the persist harness).
+
+### Planned vs implemented vs tested
+
+PLANNED: everything above. IMPLEMENTED: nothing (no `src`, no package, no harness edit). TESTED: nothing —
+no planned test is claimed to have run. The exact future verification commands are recorded in
+`tasks.md` and were NOT executed.
+
+### Next action (file-capsules)
+
+Review `.kiro/specs/file-capsules/requirements.md`, `design.md`, and `tasks.md` at the specification review
+gate BEFORE any implementation. Nothing was installed, committed, pushed, or deployed; `.agents/` and
+`.review-artifacts/` were left untouched.
+
+## file-capsules spec planning — review-finding correction pass (feat/file-capsules)
+
+Planning-only correction pass. The specification review (`.kiro/specs/file-capsules/.review/review.md`,
+`verdict.json`) returned `CHANGES_REQUESTED` with **1 HIGH, 3 MEDIUM, 4 NIT**. All eight findings were
+resolved, plus an **async-contract** correction (`crypto.subtle.digest` is a Promise) and a
+**checksum-ambiguity** correction. Only the three spec docs and this progress file were edited. **No code,
+dependencies, builds, tests, commits, or pushes.** Branch `feat/file-capsules`; baseline commit `491e55e`.
+Working tree: only `docs/progress.md` (append) and the untracked `.kiro/specs/file-capsules/` spec files
+changed; `.agents/` and `.review-artifacts/` **left untouched**. All corrections were based on the REAL
+source read this pass: `packages/kit/src/types.ts` (`State`, `ApplyOutcome` reasons
+`documentIdMismatch`|`invalidCarrier`|`malformedUpdate`, `TransportUpdate{kind:"full"|"diff"}`) and
+`packages/persist/src/{types,identity,session}.ts` (`PersistSession.identity: ResolvedIdentity{app,
+documentId,replicaId}` — **no** top-level `documentId`; `flush()` rejects `ClosedError` on
+closed/recovery; `#failSave`→`"error"` on an open-session `TransactionAbortError`/quota).
+
+### Per-finding resolution
+
+- **HIGH-1** — `PersistTarget` no longer `extends ReplicaTarget`; redefined structurally as
+  `{ identity: ResolvedIdentity; applyUpdate(unknown): ApplyOutcome; flush(): Promise<void>; getState():
+  State }`, which a real `PersistSession` satisfies with **no wrapper and no PersistSession change**. The
+  persisted helper reads the document id from `target.identity.documentId`.
+- **MEDIUM-1** — one governing document identity per path: `target.documentId` (replica) /
+  `target.identity.documentId` (persisted). Removed the redundant `documentId` parameter from
+  `importCapsuleIntoPersisted`; no caller value overrides the target identity.
+- **MEDIUM-2** — `State`/`ApplyOutcome`/`TransportUpdate` imported from `@ghostsync/kit`,
+  `ResolvedIdentity` (type-only) from `@ghostsync/persist`; none redefined. Strict TS; runtime validation
+  on `unknown`/`Uint8Array` inputs; no `any` workarounds.
+- **MEDIUM-3** — recoverable save-failure guarantee scoped to a still-readable **open** session
+  (`armWriteAbortOnce` `TransactionAbortError` → `"error"`, data readable). A `ClosedError` flush on a
+  closed/recovery/disposed session is documented as a separate terminal/programmer-error path where
+  in-memory access is **not** guaranteed. AC-CAP-009-2 scoped accordingly.
+- **NIT-1** — `encodeCapsule` accepts `Uint8Array | TransportUpdate`; a `TransportUpdate` with `kind !==
+  "full"` is a `TypeError` at the boundary (new AC-CAP-002-3).
+- **NIT-2** — `createdAt` fixed to **strict ISO-8601 UTC** (`toISOString()` round-trip + ms-`Z` regex),
+  consistent across requirements + design.
+- **NIT-3** — removed hard-coded `112/8/50/30`; AC-CAP-010-2 asserts "unchanged from the pre-change
+  baseline captured at implementation time" and distinguishes test-**file** counts (42 Kit / 7 Persist
+  unit / 9 e2e, tree-confirmable) from unasserted test-**case** counts.
+- **NIT-4** — shared fast-check helper named `tests/fc-report.ts` (no `.test.ts` suffix) so it is not
+  collected as an empty suite; noted in design Files-to-create and tasks 5.1.
+- **Async-contract** — `encodeCapsule`/`decodeCapsule`/`importCapsuleInto`/`importCapsuleIntoPersisted`
+  are `Promise`-returning; only internal non-hashing framing/metadata helpers stay sync. Reflected in
+  signatures, examples, the error contract (rejections), tasks, and planned tests (`await`/`.rejects`).
+- **Checksum-ambiguity** — `sha256` is a fixed-width 64-char lowercase-hex field appearing exactly once
+  (duplicate/ambiguous keys → `Malformed` before hashing, new AC-CAP-002-4); encode writes
+  `"0".repeat(64)`, hashes offsets 7..end, then overwrites those 64 bytes in place; verify hashes the
+  **received** bytes with only that 64-byte span swapped to the placeholder and **never** reserializes
+  parsed JSON (AC-CAP-004-2 strengthened).
+
+### Final public API (post-correction; async marked)
+
+```ts
+encodeCapsule(input: { app; documentId; update: Uint8Array | TransportUpdate; createdAt? }): Promise<Uint8Array>   // rejects TypeError on kind!=="full"
+decodeCapsule(bytes: Uint8Array, opts?): Promise<DecodedCapsule>                                                    // rejects CapsuleError
+importCapsuleInto(target: { documentId; applyUpdate }, bytes, expected: { app }, opts?): Promise<ImportResult>
+importCapsuleIntoPersisted(target: { identity: ResolvedIdentity; applyUpdate; flush; getState }, bytes, expected: { app }, opts?): Promise<PersistImportResult>
+```
+
+`CapsuleError.code ∈ { UnsupportedVersion, Malformed, AppIdentityMismatch, DocumentIdentityMismatch,
+OversizedRaw, OversizedDecoded, ChecksumMismatch, SdkRejection }`. Validation order (nothing mutates
+until the final apply): raw-size bound → magic+version → length framing → metadata parse (reject
+duplicate/ambiguous keys) + field validation (incl. `updateByteLength === actual` + strict `createdAt`)
+→ identity (governing source per path) → decoded-size bound → SHA-256 recompute+compare → Kit
+`applyUpdate`.
+
+### Files changed (this pass)
+
+- `.kiro/specs/file-capsules/design.md` — async boundary + table, SDK-type imports, `PersistTarget`
+  redefinition, identity-rules-per-path section, async-vs-sync table, strict-ISO `createdAt`,
+  checksum placeholder/verify rule, duplicate-key rejection, error table, edge cases, decision summary,
+  Files-to-create (`fc-report.ts`, new tests), Responses-to-review section.
+- `.kiro/specs/file-capsules/requirements.md` — assumptions 2/4, REQ-CAP-001/003/009, AC additions
+  (AC-CAP-002-3/4, AC-CAP-003-3), AC-CAP-004-2/009-2/010-2 rewording, traceability table,
+  Responses-to-review section. Stable REQ/NFR IDs retained.
+- `.kiro/specs/file-capsules/tasks.md` — correction-pass header note, tasks 2.3/2.4/3.1/3.2/4.1/4.2/4.3/
+  4.4/5.1/6.2/6.4 updated, mapping additions, baseline-counts rewording.
+- `docs/progress.md` — this section (all prior history preserved).
+
+### Planned vs implemented vs tested
+
+PLANNED: all corrections above. IMPLEMENTED: nothing. TESTED: nothing — **no planned test is claimed to
+have run or passed**. Every `tasks.md` item remains `- [ ]`. No install, build, or test was executed.
+
+### Next action (file-capsules correction pass)
+
+A focused re-review of the corrected spec at the specification review gate. Nothing was installed,
+committed, pushed, or reset; `.agents/` and `.review-artifacts/` were left untouched.
+
+
+## file-capsules spec planning — correction pass 3 (feat/file-capsules)
+
+Planning-only, documentation-only. External findings (five groups) were applied to
+`.kiro/specs/file-capsules/{requirements,design,tasks}.md`. **All tests remain PLANNED; none was
+executed or claimed.** Nothing was installed, built, staged, committed, or pushed; `.agents/`,
+`.review-artifacts/`, and `.review/` were left untouched.
+
+### Findings addressed
+1. **Persisted identity** — `importCapsuleIntoPersisted(target, bytes, opts?)` no longer takes an
+   expected app; `target.identity.app` + `target.identity.documentId` govern. Replica helper keeps
+   explicit `expected.app`. Planned regression: correct documentId + another app => `AppIdentityMismatch`
+   before apply and flush, state deep-equal, flush not called.
+2. **Dependency/type resolution** — no `ResolvedIdentity` import/re-export; `PersistTarget.identity` is
+   `{ readonly app: string; readonly documentId: string }`; a real `PersistSession` satisfies it unchanged
+   (harness compile-time assignment). Graph `kit <- capsule`; no `capsule -> persist`. The new importer
+   changes `pnpm-lock.yaml`: `pnpm.cmd install`, then `pnpm.cmd install --frozen-lockfile` (task 7.0).
+3. **Byte-exact checksum parsing** — fatal UTF-8 + JSON-aware token scan (decoded names, raw value spans
+   in UTF-8 byte offsets, duplicate decoded keys rejected, `sha256` = 64 literal lowercase hex with no
+   escapes); regex-only location and JSON reserialization forbidden.
+4. **Async snapshot ownership** — copy after raw-size check and before the first `await`; parse/hash/
+   return/apply from the same snapshot; encode captures inputs before hashing; SharedArrayBuffer input
+   rejected with `TypeError`.
+5. **Merge/results/errors** — (a) empty-source import preserves target data; (b) merged size above
+   Persist `maxBytes` => `applied:true, persisted:false`; (c) success is `{ applied: true }`; (d)
+   TypeError vs CapsuleError boundary per function; (e) flipped-byte claim scoped to mutations passing
+   earlier checks; (f) target closed before apply => `CapsuleError("TargetUnavailable")`, never applied.
+### New PLANNED tests (not run)
+`identity.test.ts` cross-app regression; `token-scan.test.ts`; `snapshot-ownership.test.ts`;
+`merge-semantics.test.ts`; `target-closed.test.ts`; expanded `tamper.test.ts` and `errors.test.ts`; harness
+compile-time `PersistTarget = session` check.
+### Files changed (this pass)
+`.kiro/specs/file-capsules/{requirements,design,tasks}.md`; `docs/progress.md` (this append only).
+### Next action
+One focused re-review at the specification review gate. Stable requirement IDs retained.
+
+
+## file-capsules spec planning — correction pass 4 (feat/file-capsules, 2026-11-10)
+Planning-only, documentation-only. One bounded pass applied correction-3 review findings F1-F7 to
+`.kiro/specs/file-capsules/{requirements,design,tasks}.md`. **All tests and commands remain PLANNED; none was
+executed or claimed.** Nothing was installed, built, staged, committed, pushed, or reset; `.agents/`,
+`.review-artifacts/`, and `.kiro/specs/file-capsules/.review/` were left untouched.
+### Findings addressed
+- **F1** Metadata decoder is `TextDecoder("utf-8", { fatal: true, ignoreBOM: true })` (`true` keeps a leading U+FEFF; the prior
+  `ignoreBOM: false` claim was wrong). A leading `EF BB BF` is `Malformed` before the token scan. Planned tests: "BOM-prefixed
+  metadata is Malformed"; "Unicode content before sha256 keeps byte offsets correct (round trip verifies)".
+- **F2** Harness passes a real `PersistSession` to `importCapsuleIntoPersisted` (no cast) plus a `PersistTarget` binding;
+  `-F @ghostsync/persist typecheck` (covers `harness/**/*.ts`) added after Kit and Capsule builds; clean-checkout ordered commands;
+  `persist(harness devDependency) -> capsule`, `capsule -> kit` only (acyclic); lockfile via install then `--frozen-lockfile`.
+- **F3** Encode `TransportUpdate` requires `kind === "full"` and `documentId === input.documentId` (else `TypeError` before hashing);
+  raw `Uint8Array` identity is the caller's responsibility. Three named planned tests.
+- **F4** Unconditional merged-size Chromium test: harness `open` already forwards `OpenOptions.maxBytes`; target `maxBytes: 1024`,
+  incoming 2048-char payload; expect `applied:true, persisted:false`, `QuotaExceededError`, state `"error"`, data readable.
+- **NITs** Header version 1 ok / 0 Malformed / 2..255 UnsupportedVersion; header-vs-metadata disagreement Malformed; new
+  `CapsuleError` code `CryptoUnavailable` (encode, decode, import; `cause` preserved; not Malformed); AC ordering tidied.
+### Files changed (this pass)
+`.kiro/specs/file-capsules/{requirements,design,tasks}.md`; `docs/progress.md` (this append only).
+### Next action
+One focused review of the corrected spec. Stable requirement IDs retained.
+
+## file-capsules: post-verdict inline spec edits (planning only)
+
+- Last independent review: correction-4 = **CHANGES_REQUESTED** (1 MEDIUM, 2 NIT). The verdict is preserved; no new independent approval was obtained.
+- The three remaining findings were fixed **inline** (no author/reviewer workflow) in `.kiro/specs/file-capsules/{requirements,design,tasks}.md`:
+  1. AC-CAP-006-1 scoped to capsule-content / documented operational `CapsuleError` codes; `TypeError` retained for programmer misuse.
+  2. `buffer-ownership.test.ts` consolidated into `snapshot-ownership.test.ts`, preserving mutation-during-async and returned-buffer non-aliasing (new AC-CAP-NFR3-3; SharedArrayBuffer rejection unchanged).
+  3. The merged-size Chromium assertion now measures the actual post-import `PersistSession.exportBytes()` byteLength and asserts `S_merged > maxBytes` (1024); the initial saved snapshot stays `< 1024`.
+- Record: `.kiro/specs/file-capsules/.review/post-correction-4-inline-edits.md`.
+- Status: file-capsules remains **PLANNED, not implemented**. No planned test has been executed.
+
+## file-capsules: implementation (feat/file-capsules)
+- **Implemented:** `packages/capsule` (`@ghostsync/capsule`, kit-only dependency), harness download/import controls and test hooks, `capsule-transfer.spec.ts`, `capsule-persistence.spec.ts`, README.
+- **Unit-tested (Node, vitest):** capsule 20 files / 111 tests passed; merge properties (commutativity, associativity, idempotency) seed 424242, numRuns 200, numSkips 0, numShrinks 0, all PASS.
+- **Static:** capsule typecheck/build, persist typecheck (real `PersistSession` passed to `importCapsuleIntoPersisted` and bound to `PersistTarget`, no cast) all exit 0.
+- **Browser-verified (real Chromium):** full Persist suite 37 passed (30 baseline + 7 new). Merged-size regression measured S1=26 bytes (< 1024), S_merged=2100 bytes (> maxBytes 1024).
+- **Regressions:** kit 42 files / 112 tests, persist 7 files / 50 tests, unchanged from baseline.
+- **Not done:** the ordered commands were not run from a clean checkout (task 7.1 unchecked); independent code review is a later step.
+- Evidence: `.kiro/specs/file-capsules/.review/implementation-evidence.md`.
+- **Review resolution:** the 60 s property timeouts were removed (default 5 s budget restored); capsules are now pre-built outside the repeated hashing path, assertions, 200 runs and seed 424242 unchanged. Capsule suite re-run: 20 files / 111 tests; the property tests are still timing-sensitive under machine load (see review resolution). Kit suite failed once (2 tests, kit untouched) right after the browser run, then passed 42 / 112 on rerun. Task 7.1 remains unchecked.
+
+## file-capsules: 50-run property split and snapshot verification (feat/file-capsules, uncommitted)
+- Each capsule property is now 4 named batches x 50 runs (seeds 424242..424245, numSkips 0 asserted, 200 per property asserted); capsule suite 20 files / 120 tests (was 111). 60 s property timeouts remain removed; default 5 s in force.
+- Fresh snapshot (working tree incl. untracked files, no node_modules/dist, identical lockfile) passed the full tasks.md sequence, all exit 0: frozen install, kit build, capsule typecheck/test (120)/build, persist typecheck/test (50)/build/build:harness, Chromium 37 passed, kit test 112.
+- Three extra verbose capsule runs: all exit 0, 120 tests, no timeouts; slowest batch in snapshot runs about 220 ms, overall slowest 668 ms (associativity batch 1/4, working tree).
+- Task 7.1 marked complete. Implemented / unit-tested / browser-verified (earlier) vs independently re-verified (this snapshot run) are distinct; the independent code review has not happened.
+
+- Independent snapshot re-run (orchestrator): a separate fresh source snapshot (199 files, identical lockfile hash, no node_modules/dist/.git) passed the full tasks.md sequence with every exit code 0, including 37/37 real-Chromium tests; three verbose capsule runs passed (120 tests, 12/12 batches at 50 runs, no timeouts, slowest batch 262 ms). Details: `.kiro/specs/file-capsules/tasks.md`, section "Independent re-run of the snapshot verification". The earlier line saying task 7.1 remained unchecked is superseded.
+
+## fieldledger MVP spec planning (feat/fieldledger)
+
+Planning-only milestone. **FieldLedger MVP = PLANNED ONLY.** No application code, manifest, lockfile, install, build, test, staging, commit or push happened in this step. No planned test has run. Baseline commit `916165f` ("feat(capsule): add offline file sync and verified persistence"), branch `feat/fieldledger`. `apps/fieldledger` still contains only its scaffold `package.json`. `.agents/` and `.review-artifacts/` were left untouched.
+
+### Sources read before writing
+
+`.kiro/steering/*`, this file, `apps/fieldledger/package.json`, `packages/kit/src/*`, `packages/persist/src/*`, `packages/capsule/src/*` and its README, and the existing offline harness and service-worker build (`packages/persist/harness/{harness.ts,index.html,sw-register.ts}`, `scripts/sw-precache-plugin.ts`, `vite.config.ts`, `playwright.config.ts`, `e2e/{helpers.ts,offline-assets.spec.ts,capsule-transfer.spec.ts,capsule-persistence.spec.ts,static-multiscope-server.mjs}`). Quoted signatures come from that source.
+
+### Files created
+
+- `.kiro/specs/fieldledger/requirements.md` (REQ-FL-001..019 with EARS acceptance criteria, journey, limitations L-1..L-10, open decisions D-1..D-12)
+- `.kiro/specs/fieldledger/design.md` (identity model, adapters, merge behavior, startup and session flow, autosave labels, offline flow from the real service-worker build, file import/export, error tables, UI, file plan, dependencies, Playwright scenarios E2E-FL-01..11, unit test plan)
+- `.kiro/specs/fieldledger/tasks.md` (29 pending tasks, future PowerShell verification order, requirement-to-test traceability)
+- `docs/progress.md` (this entry appended; prior history preserved)
+
+### The single user journey
+
+Two inspectors in independent browser profiles each load FieldLedger online until it reports "Ready to work offline", type the same incident ID (normalized by trim and lowercase to the Persist `documentId`, app `fieldledger`), and open it with distinct per-profile replica IDs. They edit the incident details and checklist items (each item its own mergeable record with an offline-generated `ci-<uuid>` ID and a `sortKey`), see "Saved locally" only when Persist reports `saved`, cut the network and reload offline from the service worker, and keep editing. They then exchange real `.gscap` files in both directions through the download and file input, see a "What changed" panel built from real before and after replica state, and converge. A capsule for another incident is rejected with a specific message and no change. A capsule that is applied but whose save fails shows an alert "applied, but NOT saved" with "Retry save" and "Download backup capsule"; after retry the data persists across reload.
+
+### Key decisions (with recommendations recorded in the spec)
+
+- Plain TypeScript UI, no framework, no new dependency (all dev pins reuse repo versions).
+- Replica ID: `crypto.randomUUID()` per (profile, document) in `localStorage`, distinct from the Yjs clientID; a second tab of the same profile gets `StorageInUseError` and an in-use screen.
+- Merge: different items and different fields both survive; same field keeps exactly one submitted value (no wall-clock promise); delete versus concurrent edit leaves the concurrently written field and an incomplete item shown with explicit Restore and Discard; writes are changed-fields only.
+- Service worker: copy `sw-precache-plugin.ts` into `apps/fieldledger/scripts/` with its own cache prefix (persist untouched); extract a shared helper later.
+- Failure injection: test-owned `addInitScript` wrapper over `IDBDatabase.prototype.transaction`; nothing shipped.
+- Persisted-state evidence: raw IndexedDB `getAll` on the Persist record plus Kit decode in Node, not a mock.
+
+### Open items for review
+
+- Whether the service worker's exact navigation match ignores the URL fragment is unverified; a `localStorage` last-document fallback is specified and E2E-FL-02 settles it.
+- The Kit raises an untyped `Error` for schema mismatch; the app matches its message prefix, pinned by a unit test.
+- Real browser quota exhaustion cannot be reproduced in acceptance tests; the `maxBytes` path is covered by Persist's own tests and the mapping by unit tests.
+
+### Next action
+
+Review `.kiro/specs/fieldledger/requirements.md`, `design.md` and `tasks.md` before any implementation. Nothing was committed, pushed or deployed in this step.
+
+### fieldledger spec correction pass 1 (planning only, uncommitted)
+Bounded correction of the FieldLedger spec after the consistency review. **All FieldLedger tests remain PLANNED; nothing was run, built, installed, staged or committed.**
+- MUST criteria AC-FL-001-7, 007-4, 009-7, 009-9, 010-8, 010-9, 013-6, 016-4 now map to named tests and exact observations (requirements section 9, tasks 7A); new scenarios E2E-FL-12 to 18; none downgraded.
+- Property tests: 4 named batches x 50 cases per property, seeds 424242 to 424245, replay reporter, default 5 s timeout (20 batch tests planned).
+- Ordering test uses a tied-sortKey fixture with hand-written literal ID sequences, not compareItems.
+- Removed 'Start a fresh copy', replica-ID rotation and decision D-3; damaged-record handling is limitation L-11.
+- Delete versus edit of an existing field is a characterization test; the observed Kit outcome is not yet recorded and no winner is promised (this supersedes the earlier line in the planning entry above).
+- Focus outline unified at 3 px; REQ cross-references repaired; E2E-FL-06 clicks Try again once and awaits state.
+- Original review record preserved unchanged; new note at `.kiro/specs/fieldledger/.review/correction-1-note.md`. F-6 and F-8 intentionally left open.
+
+### fieldledger MVP implementation (uncommitted, 2026-11-14)
+FieldLedger MVP implemented under `apps/fieldledger` (plain TypeScript, Vite, adapted service worker plugin). Results from real runs:
+- Implemented + unit-tested: `pnpm.cmd -F @ghostsync/fieldledger test` 13 files, 64 tests passed; 5 properties x 4 batches x 50 runs (seeds 424242 to 424245), numSkips 0.
+- Browser-verified (real Chromium, two independent contexts): `test:e2e` 18 passed (two-profile offline journey with real .gscap exchange, rejection without mutation, save failure + retry + backup, failed close recovery, page-hide commit, beforeunload guard, second-tab lock, keyboard, 320 px, ordering fixture, invalid record repair, update-after-settle, optional sub-path). `test:dist` 4 passed. One of five full e2e runs failed with a Playwright trace-artifact ENOENT (not reproduced in three later full runs and one targeted run).
+- Delete vs edit of an existing field observed: `invalidRecord` on both profiles with `fields {text: edited}`; states converge.
+- Finding: Chromium keeps the URL fragment in service worker navigation requests; the copied worker was adapted to drop it.
+- Shared packages untouched; regressions: kit 112, capsule 120, persist 50 unit, persist browser 37 all passed.
+- UNVERIFIED: clean-checkout run, Firefox/WebKit, real quota exhaustion, Kit remote-apply event delivery.
+
+### FieldLedger MVP: independent re-verification (orchestrator, after the workflow)
+
+- Re-run from the working tree, all exit 0: `install --frozen-lockfile`; kit, capsule, persist builds; FieldLedger typecheck; FieldLedger unit/property tests (13 files / 64 tests; 20 property batches, each `numRuns=50 numSkips=0 PASS`, no timeouts); production build; `test:dist` (4 tests); Chromium acceptance (18 passed, 33.2 s); shared regressions (kit 112, capsule 120, persist unit 50, persist Chromium 37 passed); `git diff --check`.
+- Production build checked for root hosting: `dist/index.html` references `./assets/...` only, the precache manifest entries are relative, `./sw.js` is registered with `scope: "./"`. Sub-path hosting is not required by the MVP (AC-FL-010-7 changed from SHALL to SHOULD; E2E-FL-11 stays an optional extra).
+- Observed delete-versus-edit outcome (characterization): shape (iii). The item is an `invalidRecord` on both profiles with identical preserved fields `{"text":"Check valve seat"}`; decoded states deep-equal. The stale "not yet recorded" note in `tasks.md` was corrected.
+- Screenshots (valid PNGs, taken after the two-profile assertions): `apps/fieldledger/test-results/two-profile-*/fieldledger-desktop-1280x800.png` (1280x1199, 51273 bytes) and `.../fieldledger-mobile-320.png` (320x1823, 50051 bytes).
+- OPEN, not fixed: `SessionController.guard()` stores `errorMessage` when an edit throws while the workspace is showing, but the only element that displays it is built for the error and in-use screens. A failed edit in the ready phase (for example a schema-mismatch error) is therefore silent. Non-blocking for the journey; against the "actionable errors" UI rule.
+- OPEN: task 5.1 (clean-checkout/fresh-snapshot run) is not done; one Playwright trace-artifact ENOENT was seen once earlier by the implementer and did not recur in my run.
+- Nothing staged, committed or pushed; `packages/**` untouched.
+### FieldLedger edit-error fix and task 5.1 (2026-11-15, uncommitted)
+- Fixed the silent failed edit in the ready workspace: `guard()` now sets `editError`; the workspace shows `[data-testid="edit-error-alert"]` (role alert, `data-edit-error-kind`) with Dismiss, Download backup capsule and, for schema-mismatch, Reload app. Phase, save state and import result are untouched. Details in `.kiro/specs/fieldledger/.review/edit-error-and-5-1.md`.
+- New tests: `tests/edit-error.test.ts` (5) and E2E-FL-19 "a failed edit in the ready workspace is shown, the workspace stays usable, and it is not shown as saved" (real Chromium; the failure is a 121-character title set through the DOM, rejected by the app's own validate). Targeted run: 1 passed.
+- Task 5.1 verified from a fresh snapshot outside the repo (`%TEMP%\fl-snapshot-*`): 264 files in both trees (.kiro, apps, docs, packages plus 6 root files), `pnpm-lock.yaml` SHA-256 identical (F3CA7E5F...AF6EE0), no node_modules or dist before install. All steps exit 0: `install --frozen-lockfile`; kit, capsule, persist builds; FieldLedger typecheck; FieldLedger tests 14 files / 69 tests with 20 property batches `numRuns=50 numSkips=0 PASS`; FieldLedger build; `test:dist` 4 passed; Chromium `test:e2e` 19 passed (38.1 s); kit 112; capsule 120; persist unit 50; persist `build:harness`; persist `test:browser` 37 passed. No ENOENT or flake seen. Task 5.1 is checked.
+- Nothing staged, committed or pushed; `packages/**` untouched.
+
+- Independent confirmation (orchestrator, 2026-11-15): the two OPEN items above are RESOLVED. A separate fresh snapshot (265 files = working tree excluding generated output, identical lockfile hash, no node_modules/dist/.git before install) passed the tasks.md sequence with every exit code 0: frozen install; kit, capsule, persist builds; FieldLedger typecheck, tests (14 files / 69 tests, 20 property batches `numRuns=50 numSkips=0 PASS`, no timeouts), build, `test:dist` (4); Chromium `test:e2e` 19 passed (35.7 s, includes E2E-FL-19); kit 112, capsule 120, persist 50. Working-tree runs matched (19/19 Chromium, targeted regression passed). `git status --short -- packages` is empty and the lockfile diff adds only the `apps/fieldledger` importer. Coverage note: E2E-FL-19 exercises the "unexpected" edit-error kind in Chromium; the schema-mismatch kind and its "Reload app" button are covered by unit tests only. The "unexpected" copy is generic for a validation failure such as an over-long title.
+- 2026-11-16 two review fixes (FieldLedger): a failed edit now keeps the last good model and does not re-read through the collection (unit test plus E2E-FL-20 with a real schema mismatch from an imported newer-schema capsule); capsule app, document ID and created time are carried through ImportView and shown, capped at 80 characters (AC-FL-013-7). typecheck 0; unit 15 files / 78 tests (was 14 / 69), 20 batches numRuns=50 numSkips=0 PASS; build and test:dist (4) pass; Chromium 20 passed (was 19). Details: .kiro/specs/fieldledger/.review/two-findings-note.md. Uncommitted.
+
+- Independent confirmation of the two review findings (orchestrator): in the working tree, FieldLedger typecheck exit 0; unit/property tests 15 files / 78 tests with all 20 property batches `numRuns=50 numSkips=0 PASS` and no timeouts; production build and `test:dist` (4) exit 0; targeted E2E-FL-19/20 2 passed; full Chromium `test:e2e` 20 passed (46.2 s). Failed edits no longer re-read through the collection (`guard()` sets `editError` and notifies; `refresh()` keeps the last good model if the read throws). E2E-FL-20 produces a real schema mismatch by importing a Node-built capsule with newer-version schema metadata, with no production hook. Capsule metadata (app, document ID, created time) is shown as text, capped at 80 characters, for applied-saved and applied-unsaved, and survives Retry save. Not re-run from a fresh snapshot this time; `packages/` untouched, nothing staged.
+- 2026-11-16 stale-workspace import notice (FieldLedger): `importFile()` now uses the boolean from `refresh()`. If the re-read fails after a capsule was applied, the last good workspace is kept, the 'What changed' diff is suppressed and a notice (`import-stale-notice`) says the workspace shows its last readable data. Save result, metadata and backup access are kept, and the notice survives Retry save. Tests: 3 new unit tests, E2E-FL-20 extended. Uncommitted. Details: .kiro/specs/fieldledger/.review/stale-workspace-note.md.
+
+- Independent confirmation of the stale-workspace-notice patch (orchestrator): FieldLedger typecheck exit 0; unit/property tests 15 files / 81 tests (was 78), all 20 property batches `numRuns=50 numSkips=0 PASS`, no timeouts; targeted E2E-FL-20 passed (4.0 s); full Chromium `test:e2e` 20 passed (39.5 s). `importFile()` now uses the boolean from `refresh()`: on a failed read the diff is not computed, `workspaceStale` is set on the import view, and `import-stale-notice` (notice text plus a Download backup capsule button) is shown with no "What changed" block. The flag survives Retry save because the unsaved-to-saved transition spreads the existing view (unit-tested). `packages/` untouched, nothing staged.
+
+## PatchBoard MVP spec planning (feat/patchboard, baseline 690cffd)
+
+Planning only. PatchBoard MVP is PLANNED, not implemented. No code, manifest, lockfile, install, build, test, commit or push was done; nothing is staged. No planned test has run.
+
+- Files created: `.kiro/specs/patchboard/requirements.md` (REQ-PB-001 to 021, EARS acceptance criteria, AC-level traceability table for every MUST), `.kiro/specs/patchboard/design.md`, `.kiro/specs/patchboard/tasks.md` (all tasks unchecked). `apps/patchboard` still holds only `package.json`.
+- Placement decision: each card is its own Kit record with scalar fields `title`, `notes`, `placement`; column and position live in ONE field `placement` (`doing|00001024`, fixed 8-digit position) so concurrent moves of one card yield one coherent winner. Two fields could merge into a mixed column/position nobody chose.
+- Write sets: move and reorder write exactly `{placement}` of that card on top of the CURRENT stored card (never the UI snapshot); renormalization writes only `placement`. A controller-level unit test with a stale rendered model and a deliberately naive writer is planned to detect a cached-card writer (none has run).
+- Delete-versus-edit and delete-versus-move are characterization tests: convergence plus an enumerated set of shapes; the observed Kit outcome is to be recorded before any text names a winner (not yet recorded).
+- Other decisions: board ID = document ID; stable replica ID per profile and board in localStorage; `card-<uuid>` IDs; ordering by position then card ID; `listResults()` is the only read path; invalid cards shown with explicit Restore and Discard; service worker plugin copied from FieldLedger with cache prefix `ghostsync-patchboard-`; root hosting only; plain TypeScript UI; Playwright port 4339; property tests are four 50-case batches with seeds 424242 to 424245.
+- Next action: review the three spec documents before any implementation. Nothing was committed or pushed.
+### PatchBoard spec correction pass 1 (2026-11-17, feat/patchboard, uncommitted)
+Specification files only; the original CHANGES_REQUESTED review (`.kiro/specs/patchboard/.review/consistency-review.md`, `consistency-verdict.json`) is preserved byte-identical. Every test remains PLANNED; nothing was built, run, installed, staged or committed, and `packages/` and `apps/` are untouched.
+- M1: action inventory A-01 to A-23 with a keyboard step and an observable result per action (E2E-PB-03, 04, 05, 08, 10, 12, 13, 14, 15, 20); one accessible-name scheme `<Action>: <card label>`; the file chooser is 'reachability asserted, chooser dialog not driven'.
+- M2: new E2E-PB-20 (focused draft survives an applied import; commit by keyboard; offline reload keeps both edits); `data-board-revision` render marker added to the UI contract.
+- M3: AC-PB-010-3 now uses a test-server 404 fixture with a request log (E2E-PB-11, fresh context), not `context.route`; the mechanism lives only in `e2e/static-server.mjs`.
+- M4: new controller-level test U-PB-21 (stale rendered model, `controller.move/reorder/saveCard` with a card ID, negative control); E2E-PB-01 stays end-to-end coverage only.
+- Low findings: `card-ok1` placement and Discard sequence; task table lists all 4.x tasks; write-set claims scoped to supported fields, unknown fields are dropped by any write (AC-PB-004-7, U-PB-22); 500-card MUST removed; wording fixed. Details: `.kiro/specs/patchboard/.review/correction-1-note.md`.
+## PatchBoard MVP implementation (feat/patchboard, baseline 690cffd, uncommitted)
+Implemented per `.kiro/specs/patchboard/{requirements,design,tasks}.md` and the correction-1 note. Nothing staged, committed or pushed. `packages/**` and `apps/fieldledger/**` unchanged (`git status --short -- packages apps/fieldledger` prints nothing). Changed outside `apps/patchboard`: `pnpm-lock.yaml` (adds only the `apps/patchboard` importer, 30 insertions and 1 deletion), `.kiro/specs/patchboard/design.md` (section 12 evidence notes), `.kiro/specs/patchboard/tasks.md` (checkboxes, status line, task 2.9 evidence), and this file. `.agents/` and `.review-artifacts/` were not touched. Dates below come from the system clock (2026-11-14).
+- What was built: a three-column board (To do, Doing, Done) under `apps/patchboard` that uses only the public Kit, Persist and Capsule APIs. Column and position live together in the single `placement` field (`doing|00001024`). `move` and `reorder` read the current stored card by ID with `getResult` and change only `placement`. Title and notes edits write only the touched fields and keep the current placement. `listResults()` is the only read path. Incomplete cards are listed in their own region with "Restore card: <label>" and "Discard card: <label>" (confirm or keep). Also built: offline startup through the adapted service-worker plugin (cache prefix `ghostsync-patchboard-`), a stable replica ID per profile and board, a save indicator driven by real Persist state, file export and import with wrong-app and wrong-board rejection, Retry save and backup after an applied-but-unsaved import, a stale-workspace notice, change board with a recovery panel, and keyboard focus and announcements after moves.
+- Characterization (observed, not promised beforehand; Kit at `690cffd`). CH-PB-1 delete versus title edit: `invalidRecord` on both replicas with preserved fields `{title: "Check valve 2"}`. CH-PB-2 delete versus move: `invalidRecord` on both with `{placement: "doing|00001024"}`. Chromium E2E-PB-06 and E2E-PB-07 observed the same shapes. Unknown fields (U-PB-22): a card with an extra `legacy` field reads as valid, and any move, reorder, edit or Restore removes the field (move written set `["legacy","placement"]`).
+- Stale-move negative control: U-PB-21 drives the real `SessionController.move/reorder/saveCard` with a rendered model older than the store and passes. As a manual check I temporarily changed `move` to put the cached card. U-PB-21 then failed: 2 of its 5 tests, with written set `["notes","placement","title"]` instead of `["placement"]`. The change was reverted before the runs below.
+- Results in the working tree (final run after the last edit), all from the repo root with `pnpm.cmd`:
+
+| Command | Exit | Result |
+| --- | --- | --- |
+| `install` / `install --frozen-lockfile` | 0 / 0 | lockfile diff adds only the `apps/patchboard` importer |
+| `-F @ghostsync/kit build`, `capsule build`, `persist build` | 0 | built |
+| `-F @ghostsync/patchboard typecheck` | 0 | strict, no `any` |
+| `-F @ghostsync/patchboard test` | 0 | 26 files / 153 tests passed; 32 property batches (P-PB-01 to 08, 4 named batches each, seeds 424242 to 424245), every batch `result=PASS numRuns=50 numSkips=0`; default timeout |
+| `-F @ghostsync/patchboard build` | 0 | `dist/` with `sw.js` and `precache-manifest.json` |
+| `-F @ghostsync/patchboard test:dist` | 0 | 1 file / 4 tests (no test hooks, no `/__test/`, `fail-asset` or `request-log` in `dist`, CSP present, relative URLs) |
+| `-F @ghostsync/patchboard test:e2e` | 0 | 19 passed in real Chromium (E2E-PB-01 to 17 and 20; 11 has two legs), 0 failed, retries 0 |
+| `-F @ghostsync/kit test` | 0 | 42 files / 112 tests |
+| `-F @ghostsync/capsule test` | 0 | 20 files / 120 tests |
+| `-F @ghostsync/persist test` | 0 | 7 files / 50 tests |
+| `-F @ghostsync/fieldledger typecheck` / `test` | 0 / 0 | 15 files / 81 tests |
+| `git diff --check` | 0 | only LF/CRLF warnings |
+
+- Task 8.3 fresh snapshot (`%TEMP%\pb-snapshot-5b1b0f9c`, robocopy exit 1, 356 files, lockfile SHA-256 identical, no `node_modules` or `dist` before install): `install --frozen-lockfile`, kit, capsule and persist builds, PatchBoard typecheck, test (26 / 153, 32 batches `numRuns=50 numSkips=0`), build, `test:dist` (4), `test:e2e` (19 passed, 53.0 s), kit 112, capsule 120, persist 50, FieldLedger typecheck and test (81). Every exit code was 0. The snapshot was removed afterwards. After that run I changed only e2e specs: five specs other than E2E-PB-01/02 switched to keyboard activation, and the `join`, `addCardUi` and `exportCapsule` helpers now default to the keyboard. The working-tree rows above were run after that change.
+- E2E-PB-01, the priority journey: two separate browser contexts, both offline. A moves the card and B edits its title and notes. Real `.gscap` files go both ways. Both profiles show the card in Doing with "Draft spec v2" / "Outline plus risks". There is exactly one record for that ID, and the stored decoded states deep-equal. A duplicate import shows "No changes". After an offline reload the board, the replica IDs and the stored states are unchanged.
+- Other corrected scenarios that passed: keyboard-only actions through real key presses, including Restore, Discard, Change board and Update now (E2E-PB-03, 08, 12, 15). A focused draft survives an import and a refresh: same DOM node, caret at 14, `data-board-revision` increased; it is committed later and both edits survive the offline reload (E2E-PB-20). A fresh context gets a real 404 for the precache CSS from the test server: the request log shows 200 for the page load, then 404 after `/sw.js`; `ready` is never observed, the final state is `failed`, and an offline reload is rejected (E2E-PB-11 leg 2). Wrong-app, wrong-board, corrupt, truncated, newer-version and oversized files are rejected with the stored record unchanged (E2E-PB-04). Applied-but-unsaved recovery: setup is flushed and asserted before the one-shot abort is armed, and Retry save and backup work by keyboard (E2E-PB-05).
+- Screenshots, taken after the assertions (under `apps/patchboard/test-results/`, gitignored, via `testInfo.outputPath`): `two-profile-*/A-desktop-1280x800.png`, `A-320x640.png`, `B-desktop-1280x800.png`, `B-320x640.png`, plus `layout-*/layout-1280x800.png` and `layout-320x640.png`.
+- Not verified or not done: E2E-PB-19 sub-path hosting (optional task 4.14, not written). The case where an old ready worker keeps serving after a failed update is not covered. Manual assistive-technology and focus-contrast checks (AC-PB-017-8) were not done. No secrets in artifacts (AC-PB-018-4) was checked by review only. Limitations L-1 to L-13 in requirements.md still apply.
+- Spec notes. A restored session shows "Nothing to save yet" until its first save, so E2E-PB-05's edit leg reads the stored sequence instead of the indicator. The E2E-PB-17 save-label assertion accepts either label at first open, because the Persist session can report sequence 1 straight after open on a fresh profile. The test helper `readStoredRecords` no longer creates the IndexedDB database when it is absent: creating it as a side effect had broken the next `openReplica` ("Browser storage is not available").
+
+## 2026-11-14 - PatchBoard import lifecycle fix (uncommitted)
+
+Root cause: `SessionController.importFile` kept no link to the session it started on, and `changeBoard` / Update now (`settle` + apply) did not check for a pending import. A slow file read could finish after the board was changed, closed or reopened, and then publish an error, set `importView`, or refresh the current board. The Change board and Update now buttons were never disabled while importing.
+
+Fix (apps/patchboard only):
+- `session-controller.ts`: `generation` counter bumped on open and `dropSession`; `importFile` captures it and the session, and discards the result after each await if either changed (no error, no view/model/import-state update, no refresh). `importPending` getter; `changeBoard` and new `requestUpdate` refuse while pending.
+- `app-view.ts`: Change board and Update now disabled while importing, re-enabled on every update.
+- Tests: `tests/import-flow.test.ts` U-PB-19 (delayed read; refusal in controller, re-enable after success/failure/rejection, stale result discarded after a session change); `e2e/import-lifecycle.spec.ts` E2E-PB-20 (delay injected test-side by patching `Blob.prototype.arrayBuffer` in the page; UI disabled, then enabled, then Update now works).
+
+Results (from apps/patchboard, actual runs): typecheck clean; `pnpm test` 26 files / 158 tests passed; `pnpm build` ok; `pnpm test:dist` 4 passed; `pnpm test:e2e` 20/20 passed (Chromium).
+Unverified: the discard-on-session-change case (c) is covered at unit level only. In the UI, Change board is disabled during an import, so Chromium cannot change the session mid-import. Negative control (removing the guards and watching the new tests fail) was not run.
+## 2026-11-14 - PatchBoard import-lifecycle Chromium coverage check (uncommitted)
+Searched apps/patchboard/e2e: the only test that holds a capsule file read open and asserts Change board and Update now disabled until the import finishes is E2E-PB-20 in e2e/import-lifecycle.spec.ts:19 (added by the previous import-lifecycle fix, untracked). The hold is test-side (patched Blob.prototype.arrayBuffer via page.evaluate). No new test or src change was needed.
+Results (from apps/patchboard, actual runs): targeted E2E-PB-20 1 passed; typecheck clean; test 26 files / 158 tests passed; build ok; test:dist 1 file / 4 tests passed; test:e2e 20 passed (Chromium). Timeouts unchanged.
+Not run: negative control (removing the guards), old-result-on-a-different-board check in Chromium (Change board is disabled during import, so covered at unit level only).
+## 2026-11-15 - QR transfer MVP spec (feat/qr-transfer, baseline fd9b9da, uncommitted)
+Planning only. QR transfer is PLANNED, not implemented. No code, manifest, lockfile, install, build, test, commit or push was done; nothing is staged. `packages/` and `apps/` are untouched. No planned test has run. Files: `.kiro/specs/qr-transfer/requirements.md` (REQ-QR-001 to 018, AC-level table for every MUST), `design.md`, `tasks.md` (all unchecked, with a separate manual physical task and results template).
+- Evidence (reported separately, never merged): EV-UNIT NOT RUN, EV-FIXTURE NOT RUN, EV-DIST NOT RUN, EV-PHYS (real phone, screen to camera, networking off after setup) NOT RUN (historical; superseded by the 2026-11-16 "QR transfer physical result (iPhone Safari)" entry below). A fixture pass will never be reported as a physical-camera pass.
+- Decisions: new package `@ghostsync/qr-transfer` in `packages/qr-transfer` (transport only, no kit/capsule/persist import); first camera integration in PatchBoard (it already has the import-pending guard and session-bound results; FieldLedger would need them backported first). Frame `GSQ1:` + Base45 in QR alphanumeric mode, one static code. Exact limit 1232 capsule bytes = 1853 characters = version 25, level L (1853 - 5 prefix = 1848 characters = 616 x 3, 616 x 2 = 1232). Scanner: bundled pure-JS `jsqr` 1.4.0 (lazy chunk, auto-precached by the existing plugin, no WASM or worker, CSP unchanged); BarcodeDetector deferred (partial support). Encoder `uqr` 0.1.3. Browser tests use a test-side `getUserMedia` stub backed by `canvas.captureStream()`. Import is explicit and at most once (capsule sha256 set per open session plus the existing import-pending guard).
+- Measured with a throwaway script outside the repo (built Kit and Capsule): empty board capsule 328 bytes, about 330 bytes per card, so about two cards fit in one code; larger boards use file transfer.
+- Physical gate: at least 9 of 10 scans in each of two size classes within 15 s on a real iPhone in Safari (retargeted from Android, see the 2026-11 retarget note below). Fallback ladder: 1232 -> 829 -> 502 bytes -> ship file-only (QR hidden). Animated QR stays OPTIONAL behind that gate.
+- Unverified (listed in design section 17): the Denso Wave and ISO capacity tables themselves (capacities come from Wikipedia and the Thonky table), character-count indicator bits and 1276 codewords at 25-L, `uqr` mode selection (covered by the boundary test), jsqr reliability on dense codes (that is what the physical test measures), Chromium fake-device file formats, `adb reverse`, CSP behavior for a camera stream.
+- Next action: review the three spec files before any implementation. Nothing was committed or pushed.
+## 2026-11-15 - QR transfer MVP implemented in PatchBoard (feat/qr-transfer, baseline fd9b9da, uncommitted and unstaged)
+Built `@ghostsync/qr-transfer` (`packages/qr-transfer`: pure entry plus `./browser`, tsc-built like Capsule) and integrated static QR transfer into PatchBoard only. QR bytes use the same `.gscap` bytes and the same import API (`importCapsuleIntoPersisted`, through `SessionController`), so app and document checks and save outcomes are unchanged. `packages/kit`, `packages/capsule`, `packages/persist` and `apps/fieldledger` are untouched (`git status` on them is empty). File transfer stays fully available. Dependencies added exactly: `jsqr` 1.4.0 and `uqr` 0.1.3 (lockfile diff: the `packages/qr-transfer` importer, the PatchBoard edge and those two packages only).
+Evidence, reported separately (a fixture pass is never a physical-camera pass):
+- EV-UNIT: PASS. `@ghostsync/qr-transfer` 10 files / 90 tests; PatchBoard 32 files / 209 tests (158 existing, unchanged and passing, plus 51 new). Property tests: P-QR-01, P-QR-02, P-QR-03 (package) and P-QR-04 (PatchBoard), four separately named 50-case batches each (16 batches), every batch `result=PASS numRuns=50 numSkips=0`; default 5 s timeout, no override (a P-QR-03 batch over 11 to 1232 bytes takes about 1.2 s).
+- EV-FIXTURE: PASS (Chromium only, fake camera = `getUserMedia` stub returning a `canvas.captureStream()` stream, distinct browser contexts per profile). `test:e2e` 36 passed, 0 failed, retries 0: the 20 existing PatchBoard tests and 16 new (E2E-QR-01, 02, 03, 04, 05, 05b, 06, 07, 08 x2, 09, 10, 11, 12, 14, 15). This is not a camera test of a phone.
+- EV-DIST: PASS. `test:dist` 1 file / 9 tests (4 existing plus 5 D-QR-01 checks): no test hooks or camera stub names in `dist`, no `.wasm`, no `new Worker`, no CDN host, the decoder is a separate lazy chunk (`assets/jsqr-engine-*.js`, 130.9 kB, not part of the entry bundle) and is listed in `precache-manifest.json`, every `dist/assets/*` file is in the manifest, the CSP meta is unchanged with no `unsafe-eval`, third-party notices ship in `dist/THIRD_PARTY_NOTICES.txt`.
+- EV-PHYS: NOT RUN (historical; superseded by the 2026-11-16 "QR transfer physical result (iPhone Safari)" entry below)
+| Command | Exit | Result |
+| --- | --- | --- |
+| Baseline before QR code (task 1.2): PatchBoard typecheck, test, build, test:dist, test:e2e; kit, capsule, persist; FieldLedger typecheck and test | 0 | 26 files / 158 tests; dist 4; Chromium 20; kit 112; capsule 120; persist 50; FieldLedger 81 |
+| `pnpm.cmd install --frozen-lockfile` (after both installs) | 0 | lockfile consistent |
+| `-F @ghostsync/qr-transfer typecheck` / `test` / `build` | 0 / 0 / 0 | 10 files / 90 tests; `dist/index.js`, `dist/browser.js` and a separate `dist/browser/jsqr-engine.js` |
+| `-F @ghostsync/patchboard typecheck` / `test` / `build` | 0 / 0 / 0 | 32 files / 209 tests |
+| `-F @ghostsync/patchboard test:dist` | 0 | 1 file / 9 tests |
+| `-F @ghostsync/patchboard test:e2e` | 0 | 36 passed |
+| `-F @ghostsync/kit test` / `capsule test` / `persist test` | 0 / 0 / 0 | 42 files / 112; 20 files / 120; 7 files / 50 (equal to the baseline) |
+| `-F @ghostsync/fieldledger typecheck` / `test` | 0 / 0 | 15 files / 81 |
+| `git diff --check` | 0 | only LF/CRLF warnings |
+Checks asked for by the task:
+- 1232-byte payload: a valid capsule of exactly 1232 bytes (padded only through card notes, built by the real `encodeCapsule`) gives a 1853-character frame, a version 25 symbol, 117 modules, level L (recorded options `ecc L, minVersion 1, maxVersion 25, boostEcc false`), and the decoded jsqr result has `version 25` and exactly one chunk with `type "alphanumeric"` whose text equals the frame; the bytes round trip equal. The same capsule imports through the QR import path (U-QR-10) and through the video path in Chromium (E2E-QR-15, import `applied-saved`). At 1233 bytes: `encodeFrame` throws `TooLarge`, a 1855-character text is `TooLarge` with 0 allocate calls, and the QR import path returns `OversizedRaw` with 0 `applyUpdate` calls (the same 1233 bytes import by file, as the file limit is larger). Real-capsule chunk evidence (review B2): `apps/patchboard/tests/qr-capsule-limit.test.ts` (U-QR-04b) builds a real `encodeCapsule` output of exactly 1232 bytes via `qrCapsuleOfSize`, checks it with `decodeCapsule`, and asserts version 25, size 117, `chunkTypes` `["alphanumeric"]`, `chunkTexts` equal to the frame and an exact byte round trip (1 test, PASS). The package test in `raster-roundtrip.test.ts` still uses synthetic bytes of the same length. Review B1: the double-encoded separator in `app-view.ts` Workspace.update was restored to the original bytes (that line no longer appears in `git diff`).
+- Spaces: the frame `GSQ1: 0` (byte 0x24) round trips through encode, raster, scan and `decodeFrame`; the synthetic `GSQ1: 0 ` is returned verbatim by the scan path and `decodeFrame` throws `OutOfRange` (U-QR-04, and in Chromium E2E-QR-15: the first gives a capsule rejection, the second a "damaged" hint while scanning continues). Odd byte counts plus a space give `OutOfRange`, even give `InvalidLength` (U-QR-02).
+- Cancel then immediate re-Scan with a late camera resolution: unit (U-QR-05 (a), (b), (c) plus a rejecting variant and a stop variant): old tracks stop exactly once, new tracks 0 stop calls and `readyState` live, `srcObject` stays the new stream, the new loop delivers one accepted result; stale `loadEngine` and `play()` rejections set no `failed` state. Browser (E2E-QR-14): the first `getUserMedia` is held, Cancel, immediate Scan, then released: stream 0 `live` and attached, the late stream 1 `ended`, state `scanning`, the new loop still reads a code. Negative control: with a shared mutable `currentStream` field the Cancel/re-Scan tests fail (4 failed, 1 passed); restored byte-identical.
+- At-most-once negative controls: with the synchronous consume and the applied-set checks removed, U-QR-10 fails 5 tests (18 pass) and E2E-QR-05 fails (`already-imported` expected, `scanned` received). With the session-end reset removed, U-QR-10 fails 2 tests and E2E-QR-10 fails (`transfer-mode` stayed `qr-scan`). Both restored byte-identical and rerun green.
+- Cross-direction guard (decision R3, spec AC-QR-008-9): QR scanning is disabled while a FILE import is pending and a running scan stops; a file import is refused while a QR import is pending. Both in the controller (U-QR-10) and in the UI (E2E-QR-05b, with the file read held and with the checksum digest held).
+- Duplicate-detection scope (decision R4): the applied set records QR imports only. A capsule applied by file and scanned later by QR is not shown as `already-imported`; it can be imported again and the merge applies nothing new (empty diff). This is stated in the QR panel, in requirements AC-QR-008-4 and L-7, and in design 8.3; U-QR-10 asserts it.
+Findings and corrections (details in `.kiro/specs/qr-transfer/.review/implementation-notes.md`):
+- `jsqr` 1.4.0 cannot decode any version 23 symbol at level L (every mask; M, Q and H at 23 and all other versions decode). `buildQrSymbol` never emits version 23 and re-encodes from 24; 988 bytes is version 24, and capsules of 971 to 1055 bytes use 24. The 1232 limit is unchanged. Whether `jsqr` or `uqr` is at fault was not isolated.
+- The entry bundle already contained one Yjs warning URL, so the dist check allows exactly that link and none in the decoder chunk.
+Remaining gaps and not run:
+- EV-PHYS (real iPhone in Safari, screen to camera, networking off; retargeted from Android): NOT RUN (historical; superseded by the 2026-11-16 "QR transfer physical result (iPhone Safari)" entry below). Task 9 was unchecked at that time. `jsqr` reliability on a phone, focus, glare and moire are unverified.
+- Review findings not changed: R5 (design 14.2 version ranges for the 829-byte S class are still wrong), E1 (`EV-FIXTURE-FAKEDEVICE` label missing from requirements 5), E2 (design 17 cites only the jsqr upload timestamp). R6 is closed on the scan side only (E2E-QR-15 at 1232 bytes); the show side tops out at a board the app can build, about 988 bytes in E2E-QR-01.
+- Not implemented: E2E-QR-13 (fake-device flags, SHOULD), a 1854-character raster in the browser (the builder refuses it; the text case is U-QR-02), task 8.10 (fresh-snapshot run), animated QR, FieldLedger adoption, any second browser or device.
+- A QR import above 1232 bytes (reachable only through `importBytes`, not by scanning) shows the file wording "larger than the 16 MiB limit"; not changed.
+- Chromium fixture limits: lens, focus, exposure, moire, glare, motion blur, screen refresh and real permission prompts are not exercised.
+## 2026-11-16 - QR physical target retargeted to iPhone Safari (spec and docs only)
+The physical acceptance target changed from an Android phone with Chrome to a real iPhone in Safari. Edited `.kiro/specs/qr-transfer/{requirements,design,tasks}.md` (design 14.1 setup, 14.3 rung 1, new 14.4 iOS facts, section 17 sources; results template with iOS version, iPhone model, HTTPS URL, certificate trust, Airplane Mode plus Wi-Fi off) and the two Android mentions in the 2026-11-15 entries above. Thresholds are unchanged: at least 9 of 10 per size class within 15 s, networking off after setup, `data-qr-scale` >= 5, the fallback ladder. Source changes: none. Spec correction: rung 1 (BarcodeDetector) cannot help on iPhone Safari; details in `.kiro/specs/qr-transfer/.review/implementation-notes-2.md`. No test, build or device run was done for this note.
+- EV-PHYS: NOT RUN (no iPhone test had been performed; no result is recorded or implied) (historical; superseded by the 2026-11-16 "QR transfer physical result (iPhone Safari)" entry below).
+
+## 2026-11-16 - QR phone-test tooling (support material, uncommitted and unstaged; EV-PHYS: NOT RUN at that time, superseded by the 2026-11-16 physical result entry below)
+Added `apps/patchboard/tools/phone-test/` (not shipped, outside `src/` and `public/`, D-QR-02 asserts it is absent from `dist`) and `docs/qr-physical-test.md`, linked from `.kiro/specs/qr-transfer/tasks.md` section 9. No app source changed; one dist test (D-QR-02) added.
+- HTTPS for the iPhone: recommended mkcert certificate on the laptop LAN IP, `https://<laptop-lan-ip>:4443/` (`serve-https.mjs`, private-network clients only; root certificate trusted on the iPhone via profile plus Certificate Trust Settings). Alternative: Cloudflare quick tunnel to `serve-https.mjs --http`, only with the owner's consent. Not run on an iPhone; no certificate was installed, no tunnel started, no firewall or OS setting changed.
+- Fixtures (synthetic, real `encodeCapsule` output, app `patchboard`, board `sprint-board`): class S S01 to S10 = 650 bytes, 980 frame chars, version 18, 89 modules; class L L01 to L10 = 1232 bytes, 1853 frame chars, version 25, 117 modules. Display page `tools/phone-test/fixture-display.html`; regenerate with `node apps/patchboard/tools/phone-test/generate-fixtures.mjs`.
+- EV-UNIT/EV-FIXTURE (automated, not EV-PHYS): `verify-fixtures.mjs` passed: 20 fixtures decode from rasters at scale 5 and 6 (jsqr, version equal, one alphanumeric chunk, `decodeFrame` returns the exact capsule bytes, `decodeCapsule` accepts); 40 displayed canvases decoded in Chromium from `file://` by keyboard stepping (1366x768 scales S 7, L 5; 1920x1080 scales S 10, L 8). `verify-import.mjs` passed: S01 and L01 import `applied-saved` into the built app on `sprint-board`; L01 on `other-board` is rejected (`DocumentIdentityMismatch`). `verify-https.mjs` passed with a temp certificate (deleted): TLS responses equal `dist`, correct types, `service-worker-allowed`, no `/__test`, traversal 404, POST 405; Chromium with the certificate pinned reached "Ready to work offline" and reloaded offline; the same page with the certificate untrusted ended `failed`. Not a Safari result.
+- Commands (apps/patchboard): typecheck exit 0; test 32 files / 209 tests passed; build exit 0; test:dist 1 file / 10 tests passed (9 before plus D-QR-02).
+- EV-PHYS: NOT RUN (historical; superseded by the 2026-11-16 "QR transfer physical result (iPhone Safari)" entry below). Unverified at that time: the iOS profile and trust steps, Safari service worker behavior with the mkcert certificate, and jsqr on a real camera.
+
+## 2026-11-16 - QR transfer physical result (iPhone Safari)
+User-reported manual test. The user ran it by hand; it is not automated and the agent did not observe it. Docs only: no code, build or test was run for this entry. Nothing is staged or committed. The `serve-https` server used for the test was stopped afterwards.
+- Device: iPhone 14 Pro Max, iOS 27.2.1 (as reported by the user), Safari (a Safari tab).
+- Setup per `docs/qr-physical-test.md`: PatchBoard served over HTTPS from the laptop with a mkcert certificate at `https://<laptop-lan-ip>:4443/` (template; the real address, certificate paths and key material are not recorded in the repository).
+- Network: PatchBoard loaded and restored board `sprint-board` while fully offline, with Airplane Mode on and Wi-Fi off.
+- Class S (S01 to S10, 650-byte capsules, QR version 18): 10/10 scans passed.
+- Class L (L01 to L10, real 1,232-byte Version 25-L capsules, 1853 frame characters): 10/10 scans passed.
+- Every scan completed within 15 seconds and the displayed module scale stayed at least 5. Per-attempt seconds and per-attempt scale values were not supplied and are not recorded.
+- Rung: 1232 (no fallback applied). Tester: the user.
+Evidence, reported separately (a fixture pass is never a physical-camera pass; earlier results are unchanged):
+- EV-UNIT: PASS (unchanged; recorded in the 2026-11-15 implementation entry: `@ghostsync/qr-transfer` 10 files / 90 tests; PatchBoard 32 files / 209 tests, re-confirmed in the 2026-11-16 tooling entry).
+- EV-FIXTURE: PASS (unchanged; Chromium fake camera, 36 passed in the 2026-11-15 entry, plus the `verify-fixtures.mjs` and `verify-import.mjs` results in the tooling entry). Not a phone result.
+- EV-DIST: PASS (unchanged; `test:dist` 9 tests in the 2026-11-15 entry, 10 tests after D-QR-02 in the tooling entry).
+- EV-PHYS: PASS (user-reported manual test, not automated, not observed by the agent; iPhone 14 Pro Max, iOS 27.2.1 as reported, Safari; class S 10/10, class L 10/10, each within 15 s, module scale >= 5, offline with Airplane Mode on and Wi-Fi off).
+What this result does not show: one device and one browser only (no second device; task 9.5 not done); hand-held distance, brightness and lighting were not recorded beyond what was reported; per-attempt times and scales were not recorded; whether the `Network: offline` indicator and a per-class explicit import were checked was not separately reported. It means "reads in these conditions", not a guarantee. Animated QR stays optional and not started. Spec files updated: requirements AC-QR-016 rows and section 5, design section 14.5, tasks section 9 results template.
+## 2026-11-16 - Kiroween UI polish (FieldLedger and PatchBoard)
+UI and wording only. Persistence, merge, file transfer, QR decoding, session control and service worker are unchanged; `packages/` untouched. Nothing is staged or committed. The polish has NOT been re-tested on a phone: EV-PHYS stays the existing user-reported PASS for the pre-polish build (iPhone Safari, class S 10/10, class L 10/10) and does not cover this UI.
+- Design system: one stylesheet `src/styles/ghostsync-theme.css` (identical copy in both apps, a unit test checks parity) with CSS variable tokens (midnight/navy surfaces, violet/cyan/green accents, a 6px orange tagline dot only), shared `gs-*` patterns (brand header with inline SVG ghost mark, status chips with icon plus text, panels, buttons, help text, "Learn more" details, scan frame), system fonts only, no remote assets, `prefers-reduced-motion` rules. App-specific layers: `fieldledger.css`, `patchboard-ui.css`. First-time guidance (`src/ui/guidance.ts`) shows "How GhostSync works", dismissible with "Start working", reopened by the header "How it works" button, preference kept in localStorage (works when storage is blocked).
+- Files changed: apps/fieldledger (index.html, src/main.ts, src/ui/app-view.ts, new src/styles/, src/ui/guidance.ts, tests/theme-parity.test.ts, e2e/guidance.spec.ts, e2e/screenshots.spec.ts); apps/patchboard (index.html, src/main.ts, src/ui/app-view.ts, src/ui/card-row.ts, src/transfer/qr/qr-view.ts, new src/styles/, src/ui/guidance.ts, tests/theme-parity.test.ts, e2e/guidance.spec.ts, e2e/screenshots.spec.ts). Verification pass fixed double-encoded characters ("Ã‚Â·") in `patchboard/src/ui/app-view.ts` and `card-row.ts`, hid empty QR detail rows when idle, and added spacing above Import/Discard.
+- Checksum wording: in the technical-details "Learn more" sections and the file-trust notes: a checksum detects damaged data; it does not prove who created or sent the capsule. QR evidence lines above are unchanged.
+| Command | Exit | Result |
+|---|---|---|
+| fieldledger typecheck | 0 | clean |
+| fieldledger test | 0 | 16 files / 85 tests (baseline 15 / 81) |
+| fieldledger build | 0 | ok |
+| fieldledger test:dist | 0 | 1 file / 4 tests |
+| fieldledger test:e2e (Chromium) | 0 | 29 passed (baseline 20 + 4 guidance + 5 screenshots); after the review fix, one run exited 1 on a Playwright trace-file ENOENT at `context.close()` in SHOT-FL-11 (no assertion failed); final run with `trace: "off"` in the screenshot spec: exit 0, 29 passed |
+| patchboard typecheck | 0 | clean |
+| patchboard test | 0 | 33 files / 213 tests (baseline 32 / 209) |
+| patchboard build | 0 | ok |
+| patchboard test:dist | 0 | 1 file / 10 tests |
+| patchboard test:e2e (Chromium) | 0 | 45 passed (baseline 36 + 4 guidance + 5 screenshots); after the review fix, one run exited 1 on the same trace-file ENOENT at `context.close()` in SHOT-PB-05/06 (no assertion failed); final run with `trace: "off"` in the screenshot spec: exit 0, 45 passed |
+| qr-transfer test | 0 | 10 files / 90 tests |
+| kit test | 0 on rerun | 42 files / 112 tests; first run failed 1 test while FieldLedger e2e ran in parallel, rerun alone passed |
+| capsule test | 0 | 20 files / 120 tests |
+| persist test | 0 | 7 files / 50 tests |
+- Screenshot specs write PNG/JSON only when `GS_SCREENSHOT_DIR` is set (no hard-coded path); without it they run the same assertions and write nothing (verified: FL 5 passed, PB 5 passed, 0 files written). They set `test.use({ trace: "off" })` because they open several contexts per test and trace copying hit ENOENT on Windows.
+- Screenshots (untracked, never committed): `.agents/tasks/ui-polish/screenshots/` with `index.md`, `audit-*.json`; contrast numbers in `.agents/tasks/ui-polish/contrast.md`.
+- Limitations: contrast is computed from tokens, not measured on rendered pixels; no real Safari or real mobile toolbar test (a 100px viewport reduction was emulated); not re-tested physically; at 320px the QR is intentionally not drawn (too narrow, file transfer offered); PatchBoard failed-edit and scan-in-progress states have no screenshot; checklist row buttons wrap unevenly at 320px; no screen reader testing.
+### 2026-11-16 - FieldLedger E2E-FL-10 regression found after the UI polish (uncommitted)
+- Found by the orchestrator: FieldLedger `test:e2e` gave 28 passed, 1 failed (E2E-FL-10: `first-visit-notice` expected visible, received hidden).
+- Root cause: a timing race, not a changed render condition. Offline readiness completes about 5-100 ms after load, and `page.goto` can return after that, so the notice (hidden when ready, as specified) is sometimes already hidden at the first assertion. The same test against an unmodified HEAD copy (built under `$env:TEMP`) also failed 3 of 8 runs. The polished build failed 4 of 6.
+- Fix (UI only, no test, timeout, service-worker or controller change): `apps/fieldledger/index.html` now carries the notice element before any script runs, `AppView` adopts it, and the hide is deferred until 1.5 s after page start (`NOTICE_MIN_VISIBLE_MS`) so the notice is readable instead of a flash. `data-offline-ready`/`data-offline-state` and the offline indicator are not delayed. The notice is still hidden once ready.
+- PatchBoard: its first-visit test records states and has no such race; no change. `offline.spec.ts` ran 10x: 40 passed.
+- Results: E2E-FL-10 x15 passed 15/15; FieldLedger typecheck ok, unit 16 files/85 tests, build ok, test:dist 4, full e2e 29 passed (run twice, both 29/0). PatchBoard typecheck ok, unit 33 files/213 tests, test:dist 10, full e2e 45 passed.
+
+### 2026-11-16 - Kiroween UI polish: final visual QA (uncommitted)
+- Changed: FieldLedger checklist rows (`apps/fieldledger/src/styles/fieldledger.css`, CSS only; markup, names, IDs, DOM and tab order untouched). Title input beside the checkbox, status chip on its own line, three equal-width action buttons on one line (stable at 320, 390; desktop stays one line). Both `ghostsync-theme.css` copies got the same one-line change (`pointer-events: none` on the step badge), still byte-identical.
+- New tests: FieldLedger `e2e/overlap-audit.spec.ts` (2 overlap + 3 row-layout), PatchBoard `e2e/overlap-audit.spec.ts` (4) and `e2e/screenshots.spec.ts` SHOT-PB-13 (failed edit) and SHOT-PB-14 (scan in progress); shared test-only helper `e2e/overlap.ts` in each app. No assertion weakened, no production hook added.
+- Results (real runs, exit 0): FieldLedger typecheck ok, unit 16 files/85, build ok, test:dist 4, Chromium e2e 34 passed twice (29 + 5 new). PatchBoard typecheck ok, unit 33 files/213, build ok, test:dist 10, Chromium e2e 51 passed (45 + 6 new).
+- Overlap audit: 0 failures in every state. PatchBoard (guidance, workspace, failed edit, QR display, scan in progress, scan review; desktop and 320): 20 to 62 elements and 36 to 137 hit points per state; QR canvas audited on desktop display (no filter, opacity, transform, blend or animation on it or its ancestors). FieldLedger (guidance, workspace, unsaved alert; desktop and 320): 21 to 64 elements, 37 to 176 hit points. One finding fixed: the step badge accepted pointer events.
+- Screenshots: `.agents/tasks/ui-polish/screenshots/` (09 recaptured; 13 and 14 new); see `index.md`.
+- Remaining limitations: contrast is computed from tokens, not measured on rendered pixels; no real Safari or real mobile toolbar test (100px viewport reduction emulated); not re-tested physically; at 320px the QR is intentionally not drawn; the scan-in-progress frame comes from a stub camera, not a physical one; no screen reader testing.
+
+## 2026-11-17 - GhostSync interface redesign (PatchBoard and FieldLedger; uncommitted)
+
+Presentation and guidance only. This replaces the visual direction of the "Kiroween UI polish" above (commit 9d010a7). `packages/` and both `session-controller.ts` files are untouched (git status for `packages/` is empty); service-worker and precache code, validation, QR limits, import confirmation, duplicate handling and every recovery action behave as before. Nothing is staged or committed.
+
+What changed:
+- One shared visual language in `ghostsync-theme.css` (still two byte-identical copies; `tests/theme-parity.test.ts` unchanged and passing): solid warm-charcoal surfaces, clear borders, one muted amber accent for identity and primary actions, green/red/yellow/blue only for status. Removed: fog, glow, gradients, grain, circuit traces, corner notches, pills, step badges, the tagline and all animation/transition other than none.
+- Compact header (small inline SVG mark, GhostSync + app name, Help). "How it works" is now behind a labelled **Help** button, closed by default, never modal, never takes focus; "Close help" or Escape closes it and focus returns to Help. It no longer stores anything in localStorage (`GUIDANCE_KEY` removed).
+- One stable status bar for both apps: plain text derived from the real network and save state ("Offline · Changes still save on this device", or "Changes are NOT saved to this device." when save failed or recovery is pending), chips for network, transfer mode and offline readiness, the first-visit notice and update banner. When `navigator.onLine` is false the bar's top rule, border, icon and text turn amber; the bar keeps its height (checked in SHOT-PB-04). FieldLedger keeps the `NOTICE_MIN_VISIBLE_MS` behaviour (E2E-FL-10).
+- First visit: Open board / Open incident sits on the same row as the ID field (stacked on phones), with one sentence under it saying everyone enters the same ID; above the fold at 390x844 and 320x568.
+- PatchBoard: workspace title (board ID), Share / Import / Change board in the header, Add card, then three columns (stacked on phones) with names and counts always visible; only To do has an empty-state instruction.
+- FieldLedger: incident details as a field-report sheet (title, location/severity/status, notes), then a checklist with "N of M done", Add item, and rows built as: done box + state, full-width title, the full title wrapped below when long, three equal 44px actions.
+- Transfer (both apps, same structure): "Download file" (button still named Export capsule (.gscap)), "Import file" (label unchanged), PatchBoard also "Show QR code" and "Scan QR code". Helper text says QR for nearby devices and small updates, file for larger ones; scanning only previews and Import scanned capsule applies; a file import applies straight away with no preview (read from the controllers). The unknown-sender warning sits at the file import control and at the scanned-capsule Import/Discard decision. FieldLedger says plainly there is no QR. Checksum details moved into disclosures.
+- Demo moment: after an import the board page shows a result block above the Add card form, from the real import view: "Imported: 1 added, 1 change", "Saved on this device." (or "Not saved to this device yet. Use Retry save."), then the existing "What changed" list. Pure helpers in `src/ui/status-text.ts` (unit tested).
+- QR stays still, black on white, quiet zone inside the bitmap; the frame is a flat border; the scan preview has only the dashed guide (dimming overlay removed).
+
+Tests changed (all belong to the previous pass): `e2e/guidance.spec.ts` (Help closed by default, Close help, Escape, focus returns to Help, never blocks, storage-denied case; both apps), `e2e/overlap-audit.spec.ts` (opens Help first; FieldLedger row test follows the new row structure), `e2e/screenshots.spec.ts` (new states and names, 44px and 320px checks; PNGs only when `GS_SCREENSHOT_DIR` is set). New: `tests/status-text.test.ts` in each app. No test from 4b061be or earlier was edited; no `.only`, `.skip` or retries added.
+
+| Command (real runs) | Exit | Result |
+|---|---|---|
+| fieldledger typecheck / build | 0 / 0 | clean / ok |
+| fieldledger unit | 0 | 17 files / 90 tests (was 16 / 85: +status-text) |
+| fieldledger test:dist | 0 | 4 |
+| fieldledger Chromium (2 runs) | 0, 0 | 35 passed each (was 34: +1 screenshot test) |
+| patchboard typecheck / build | 0 / 0 | clean / ok |
+| patchboard unit | 0 | 34 files / 218 tests (was 33 / 213: +status-text) |
+| patchboard test:dist | 0 | 10 |
+| patchboard Chromium (3 runs) | 1, 0, 0 | run 1: 52 passed, 1 failed (E2E-PB-15, Playwright trace-file ENOENT at `context.close()`, no assertion failed; same Windows trace flake noted earlier); runs 2 and 3: 53 passed (was 51: +2 screenshot tests) |
+| qr-transfer | 0 | 10 files / 90 tests |
+
+Screenshots (untracked): `.agents/tasks/ui-redesign/after/` (pairs with `before/`), index in `.agents/tasks/ui-redesign/index.md`. Programmatic checks per state: no horizontal overflow at 320, every control named, 44px targets on phone states, overlap audit 0 failures in every state.
+
+Outstanding checks: the redesign is NOT re-tested on Safari or a physical camera. Still to do: iPhone Safari rendering, safe-area and bottom-toolbar behaviour (only a 100px viewport reduction was emulated), a physical camera scan of the unchanged QR, VoiceOver. The EV-PHYS PASS recorded above applies to the earlier build, not to this interface. Contrast was judged by eye on rendered screenshots, not measured.
+
+### 2026-11-16 - GhostSync interface redesign: neutral "Nothing to save yet" (uncommitted at time of writing)
+- Change: the save indicator shows "Nothing to save yet" (state saved, sequence 0) in the neutral style `gs-save--neutral` instead of the green success style, in both apps (`ui/app-view.ts` tone selection and the shared `ghostsync-theme.css`, copies still identical). Green stays for a real save (sequence above 0). The full-title fallback for long checklist titles on phones is unchanged.
+- Results (real runs, exit 0): FieldLedger typecheck ok, unit 90, build ok, test:dist 4, Chromium 35 passed; PatchBoard typecheck ok, unit 218, build ok, test:dist 10, Chromium 53 passed; `git diff --check` exit 0. No test asserts the indicator colour class, and no screenshot was re-captured for this change. Safari, physical-camera and screen-reader checks remain outstanding for the redesign.
+
+## 2026-11-17 - Kiroween redesign (hero-led) (PatchBoard first, then FieldLedger; uncommitted)
+- Direction: "illustrated midnight field guide" replaces the charcoal-and-amber tool look. Ink-purple, warm paper, Kiro-inspired violet, lantern amber. Display serif only in the hero; system sans in the apps. One original ghost courier (violet lantern, sealed capsule) from a single local SVG symbol set, used in the hero (crossing between a phone and a laptop on a dotted flight path under a crescent moon), the offline banner, the "See how it works" steps and the QR Scan, Review, Import steps. Torn-paper edge on the paper panels. Spec: `.kiro/specs/kiroween-ui/{requirements,design,tasks}.md`; one "Visual identity" bullet added to `.kiro/steering/ui.md`.
+- PatchBoard: hero ("When the signal dies, the work goes on.", Board ID field with "e.g. sprint-board" and "Use the same board ID on both devices.", Open board, See how it works) beside the art on desktop and stacked on phones with Open board above the fold. Small header. Board is the centre of the workspace; Add card first; Share and Import in the board header. One compact offline banner "The network vanished. Your work didn't." driven by the real offline state, one lantern reaction, then still. QR sender on a white stage with the full quiet zone; receiver Scan, Review, Import steps driven by the real scan state; import result states whether it saved.
+- FieldLedger: same identity as the companion field notebook; checklist is the focal point, long-title fallback kept, "Nothing to save yet" stays neutral.
+- Readiness shown once: online shows the offline-ready indicator; offline shows the banner. `network-chip` and `#status-note` stay in the DOM, visually hidden. Credit "Built with Kiro for Kiroween" is in Help.
+- Not changed: `packages/`, `apps/*/src/session/`, service worker, precache plugin, QR limits, import flow. `git status` for those paths is empty; nothing staged or committed.
+
+| Check (real runs, pnpm.cmd, output captured with Out-String) | Exit | Result |
+|---|---|---|---|
+| patchboard typecheck / build | 0 / 0 | clean / ok |
+| patchboard unit (EV-UNIT) | 0 | 38 files, 273 tests (baseline 218, +55) |
+| patchboard test:dist (EV-DIST) | 0 | 14 (baseline 10, +4) |
+| patchboard Chromium full suite, 2 runs (EV-FIXTURE) | 0, 0 | 69 passed each (baseline 53, +14 E2E-KW-PB, +2 screenshot tests) |
+| fieldledger typecheck / build | 0 / 0 | clean / ok |
+| fieldledger unit (EV-UNIT) | 0 | 19 files, 137 tests (baseline 90, +47) |
+| fieldledger test:dist (EV-DIST) | 0 | 8 (baseline 4, +4) |
+| fieldledger Chromium full suite, 2 runs (EV-FIXTURE) | 0, 0 | 43 passed each (baseline 35, +8 E2E-KW-FL) |
+| qr-transfer unit | 0 | 10 files, 90 tests |
+| `git diff --check` | 0 | clean (CRLF notices only) |
+
+Evidence, kept separate: EV-UNIT (vitest, above), EV-FIXTURE (Chromium emulation of iPhone sizes 320x568, 390x664, 430x739, 430x932, keyboard emulated by a 390x340 viewport), EV-DIST (built output scans: no remote URLs, new assets in the precache list where files), EV-PHYS **NOT RUN** for this build. Browser emulation is not Safari and is not an iPhone.
+
+Contrast (computed by `tests/theme-contrast.test.ts` from the shipped theme): ink body 15.99, muted 10.76, primary button text 5.23, amber 9.90, offline banner text 12.27, focus ring 13.33 on ink; paper body 13.71, muted 6.30, focus ring 11.89, input border 5.35; chips 8.25 to 10.09 on ink and 5.46 to 7.00 on paper. The violet button against the paper panel is 4.33 (a non-text boundary; the button also has a label and a 3px focus ring).
+
+Earlier-pass tests changed (equivalent coverage kept): `apps/patchboard/e2e/screenshots.spec.ts` (viewport set, new captures), `apps/fieldledger/e2e/screenshots.spec.ts` (this step: scroll to top before the offline-reload capture and an extra offline-banner capture), `apps/*/vitest.config.ts` and `vitest.dist.config.ts` (register the new dist-assets test). No test from 4b061be or earlier was edited; no `.only`, `.skip`, retries or timeout change.
+
+Screenshots (untracked, never committed): before `.agents/tasks/ui-kiroween/before/`, after `.agents/tasks/ui-kiroween/after/`, index `.agents/tasks/ui-kiroween/index.md`. One flaky first run: FieldLedger SHOT-FL-02 failed once while both apps' capture runs ran at the same time (createDetails did not show the title); it passed on the next run and in both full suites.
+
+Outstanding (not done): real iPhone Safari rendering, toolbar and keyboard behaviour, a physical camera scan of the unchanged QR, VoiceOver. See "Re-test the redesigned build on your iPhone" in `docs/qr-physical-test.md`.
+
+## 2026-11-17 - Kiroween mobile usability pass (PatchBoard and FieldLedger; uncommitted)
+Builds on the uncommitted hero-led redesign on feat/qr-transfer (HEAD f55f359). Nothing staged or committed. Presentation, layout and focus only: no change under `packages/` or `apps/*/src/session/`, no change to import, persistence, merge, QR decode, QR limits or the service worker. Spec: REQ-KW-016 in `.kiro/specs/kiroween-ui/`.
+
+Changes:
+- After a scan is accepted, the QR view handles the controller's existing one-shot focus request. It scrolls the scan panel into view (`block: "start"`; `smooth`, or `auto` under reduced motion) and focuses the review heading "Capsule found. Not imported yet" (`h5`, `tabindex=-1`, `data-testid=qr-review-heading`). This happens once per transition into review and never on errors.
+- Review block order: board name, capsule size, the unchanged trust warning, Import scanned capsule, Discard scan. App, document, created time and checksum moved into a closed `details` named "Details: app, created, checksum". All test IDs are kept. No sticky action bar: both actions are in the first viewport at 390x664 and 320x568 after the scroll.
+- First-visit hero (both apps): the readiness line and the first-visit notice now sit below the action (same DOM and test IDs). The art is smaller on short screens, the spacing is tighter, and there is less dead space at the bottom.
+- Screenshot fixes: one-line save help no longer reserves two lines on phones (both apps); the Scan, Review, Import labels no longer wrap at 320px. Findings and before/after paths are in `.agents/tasks/ui-kiroween/mobile-pass.md`.
+- Existing test edits: three assertions that expected focus on `qr-import-btn` after a scan now expect `qr-review-heading` (`qr-transfer.spec.ts`, `qr-camera.spec.ts`, `kiroween.spec.ts`), because the requested behaviour moves focus. No pre-4b061be test changed.
+- New tests: `apps/patchboard/e2e/mobile-pass.spec.ts` (E2E-MP-PB-01..07), `apps/fieldledger/e2e/mobile-pass.spec.ts` (E2E-MP-FL-01..02), and SHOT-PB-17 in `apps/patchboard/e2e/screenshots.spec.ts`.
+
+Hero numbers (Chromium emulation, first visit): Open board bottom edge 436 at 390x664 (was ~640), 467 at 430x739, 388 at 320x568, 388 at 320x480. Open incident: 410, 439, 362, 362. Keyboard emulation at 390x340 and 320x300: the focused field is in view, the button is reachable by one scroll without covering it, and Enter opens.
+
+| Check | Exit | Result |
+| --- | --- | --- |
+| PatchBoard typecheck / unit / build / test:dist | 0 / 0 / 0 / 0 | clean / 273 passed / built / 14 passed |
+| PatchBoard Chromium e2e, two runs | 0 / 0 | 77 / 77 passed (69 + 8 new) |
+| FieldLedger typecheck / unit / build / test:dist | 0 / 0 / 0 / 0 | clean / 137 passed / built / 8 passed |
+| FieldLedger Chromium e2e, two runs | 0 / 0 | 45 / 45 passed (43 + 2 new) |
+| packages/qr-transfer test | 0 | 90 passed |
+
+Screenshots (in `.agents/tasks/ui-kiroween/after/`, previous versions in `after-prev/`): local-patchboard-first-visit-phone-viewport.png, local-patchboard-first-visit-phone.png, local-patchboard-first-visit-keyboard-390x340.png, local-patchboard-qr-review-phone-viewport.png, local-patchboard-qr-review-320-viewport.png, local-patchboard-qr-sender-stage.png, local-patchboard-qr-sender-stage-phone.png, local-patchboard-populated-phone.png, local-patchboard-populated-desktop.png, local-fieldledger-populated-phone.png, local-fieldledger-populated-320.png, local-patchboard-first-visit-320.png, local-fieldledger-first-visit-320.png.
+
+Evidence:
+- EV-UNIT: ran (unit suites above).
+- EV-FIXTURE: ran in Chromium emulation (iPhone sizes, short viewports as keyboard stand-in, fake camera). This is NOT Safari.
+- EV-DIST: ran (test:dist above).
+- EV-PHYS: pending. Real iPhone Safari, the keyboard, the toolbars and camera testing are NOT RUN until the user tests the preview (checklist in `docs/qr-physical-test.md` section 11).
+
+### 2026-11-17 - Incident: kiroween-ui spec files deleted and reconstructed
+During the mobile pass, a PowerShell helper named `Rd` collided with the built-in `rd` alias (Remove-Item). It deleted `.kiro/specs/kiroween-ui/{requirements,design,tasks}.md` (untracked, so git had no copy) and `docs/qr-physical-test.md` (tracked, restored from HEAD and re-extended). The three spec files were rebuilt from the recorded tool calls in the session logs (`.agents/tasks/ui-kiroween/recover-specs.mjs`, `recover-finish.ps1`). They are reconstructions, not the originals. In the PR-preview prep each file got a RECONSTRUCTED banner, the AC tables were checked against the current tests and code (26 rows rewritten where the named test or observation was wrong, T4.5 ticked per `final-review.md`), and `design.md` gained a Recovery confidence table. Not recoverable: wording edited outside the recorded calls, finding-by-finding review history, per-task evidence links and unrecorded decision rationale.
+
+## 2026-11-17 - Kiroween PR-preview prep (PatchBoard and FieldLedger; uncommitted)
+Builds on the uncommitted redesign and mobile pass on feat/qr-transfer (HEAD f55f359). Nothing staged or committed by this step. No change under `packages/` or `apps/*/src/session/`, and no change to import, persistence, merge, QR decode, QR limits or the service worker.
+- Specs: `.kiro/specs/kiroween-ui/*` marked RECONSTRUCTED and checked against the code and tests (see the incident note above and the Recovery confidence section in `design.md`).
+- Visual QA of the desktop QR sender, the imported result, the keyboard-open shots and the 320px layouts. Findings and absolute paths are in `.agents/tasks/ui-kiroween/preview-qa.md`; superseded images are in `.agents/tasks/ui-kiroween/after-prev/pr-preview/`.
+- Fix: when the QR show panel is too-narrow or too-large, a `Go to file export` button under the unchanged message focuses `Export capsule (.gscap)` (PatchBoard `qr-view.ts`; test E2E-MP-PB-08).
+- Fix: with a visual viewport of 26rem or less (keyboard open), the hero supporting line is hidden and the headline is smaller, so Open board / Open incident is fully visible at 390x340 (both apps, CSS only).
+- Added SHOT-FL-13: FieldLedger keyboard-open captures at 390x340 and 320x300.
+- Narrow threshold kept. A version-18 code (568 to 658 bytes, 97 modules with the quiet zone) needs 388 CSS px at the minimum integer scale 4 (qr-transfer AC-QR-004-3). That is wider than a 390px portrait phone can give even without padding, so too-narrow at 390 is correct. Only the fallback was made easier to reach.
+- Not changed: the populated phone page height (3,789px at 390 wide). Collapsing the transfer explanations would hide guidance for little gain; left for the user's preview review.
+- FIXED (see the follow-up line below). Pre-existing intermittent failure found (not caused by the prep step): FieldLedger `renderDetails` rebuilds the "Create incident details" form on every render while the incident has no details (also at HEAD f55f359). A render between typing the title and pressing Create clears the typed title. It failed E2E-KW-FL-05 once in this step (FieldLedger e2e run 2). The same `createDetails` symptom appears in the earlier records (`final-results.md` SHOT-FL-02, `mobile-review.md` SHOT-FL-12).
+- 2026-11-18 follow-up, FieldLedger create-details input loss FIXED. Root cause: `renderDetails` cleared and rebuilt the create form (new title input and button) on every render while the incident had no details, so any render (network chip, offline banner, save state, controller notify) dropped the typed title, caret and focus. Fix (view layer only, `apps/fieldledger/src/ui/app-view.ts`): while the incident stays absent and the form is still attached, the form is reused and only the Create button's disabled state is updated; it is rebuilt only when the state changes. No controller, package, persistence, import, merge or service-worker change. Regression tests: `apps/fieldledger/e2e/input-preserved.spec.ts` (E2E-FL-INPUT-01..03: title, caret, focus and DOM node identity across an offline/online flap and a rejected-import notify, then Create works; checklist item input; incident ID field) and `apps/patchboard/e2e/input-preserved.spec.ts` (E2E-PB-INPUT-01..02: Board ID, Add card title and notes). Before the fix E2E-FL-INPUT-01 failed (the typed node was replaced, so its marker attribute was gone); after it, `--repeat-each=10` gave 30/30 passed. The FieldLedger checklist input and incident ID field and both PatchBoard forms already survived re-renders (their tests passed on unfixed code) and needed no change.
+
+| Check (pnpm.cmd, output captured with Out-String; logs in `.agents/tasks/ui-kiroween/logs/prq-*.txt`) | Exit | Result |
+| --- | --- | --- |
+| PatchBoard typecheck / unit / build / test:dist | 0 / 0 / 0 / 0 | clean / 38 files, 273 passed / built / 14 passed |
+| PatchBoard Chromium e2e, run 1 / run 2 | 0 / 0 | 78 / 78 passed (77 + E2E-MP-PB-08) |
+| FieldLedger typecheck / unit / build / test:dist | 0 / 0 / 0 / 0 | clean / 19 files, 137 passed / built / 8 passed |
+| FieldLedger Chromium e2e, run 1 / run 2 / run 3 | 0 / 1 / 0 | 46 passed / 45 passed, 1 failed (E2E-KW-FL-05, the pre-existing failure above) / 46 passed (46 = 45 + SHOT-FL-13). Run 3 is reported in addition to the failed run, not instead of it |
+| packages/qr-transfer test | 0 | 10 files, 90 passed |
+| `git diff --check` | 0 | clean (CRLF notices only) |
+Evidence:
+- EV-UNIT: ran (unit suites above).
+- EV-FIXTURE: ran in Chromium emulation (phone sizes, short viewports as a keyboard stand-in, fake camera). This is NOT Safari.
+- EV-DIST: ran (test:dist above).
+- EV-PHYS: pending. Real iPhone Safari, the toolbars, the iOS keyboard and the camera are NOT RUN until the user tests the preview (`docs/qr-physical-test.md` section 11).

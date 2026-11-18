@@ -1,0 +1,62 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": "HIGH-1",
+      "severity": "HIGH",
+      "title": "PersistTarget extends ReplicaTarget is not satisfied by a real PersistSession (no top-level documentId)",
+      "where": "design.md Public API (ReplicaTarget/PersistTarget)",
+      "fix": "Do not extend ReplicaTarget; define PersistTarget as { applyUpdate(carrier): ApplyOutcome; flush(): Promise<void>; getState(): State } and use the explicit documentId parameter (sourced from session.identity.documentId)."
+    },
+    {
+      "id": "MEDIUM-1",
+      "severity": "MEDIUM",
+      "title": "Redundant/conflicting document-id sources on the persisted import path",
+      "where": "design.md Public API importCapsuleIntoPersisted + Validation order step 8",
+      "fix": "Make the persisted helper single-source on its documentId parameter; remove the target.documentId reliance and state which source governs the identity check."
+    },
+    {
+      "id": "MEDIUM-2",
+      "severity": "MEDIUM",
+      "title": "State type used in public API without stating it is imported from @ghostsync/kit; strict/no-any path unspecified",
+      "where": "design.md Public API (PersistTarget.getState/PersistImportResult) + Files to create src/types.ts",
+      "fix": "State that State/ApplyOutcome and any Kit value types are imported/re-exported from @ghostsync/kit (never redefined), mirroring packages/persist/src/types.ts."
+    },
+    {
+      "id": "MEDIUM-3",
+      "severity": "MEDIUM",
+      "title": "Save-failure claim 'session state is error and recoverable' is only true on the open-session abort path, not for a ClosedError flush",
+      "where": "design.md Import helper semantics (REQ-CAP-009) + Error handling table; requirements.md AC-CAP-009-2",
+      "fix": "Scope the recoverable-save guarantee to an open-session armWriteAbortOnce TransactionAbortError; note a ClosedError flush on a terminated session is a separate programmer-error path."
+    },
+    {
+      "id": "NIT-1",
+      "severity": "NIT",
+      "title": "encodeCapsule assumes kind full without validating the input is full-state",
+      "where": "design.md Public API EncodeCapsuleInput",
+      "fix": "Document that update MUST be exportState().bytes (kind full); optionally assert kind === 'full' at the boundary."
+    },
+    {
+      "id": "NIT-2",
+      "severity": "NIT",
+      "title": "createdAt validation via Date.parse admits non-ISO strings despite ISO-8601 claim",
+      "where": "design.md Metadata JSON createdAt rule",
+      "fix": "Either relax wording to 'parseable date string (informational)' or enforce a strict ISO round-trip/regex, consistently across requirements and design."
+    },
+    {
+      "id": "NIT-3",
+      "severity": "NIT",
+      "title": "AC-CAP-010-2 pins exact test counts (112/8/50/30) not confirmable from the tree",
+      "where": "requirements.md AC-CAP-010-2 + tasks.md Expected counts",
+      "fix": "Assert suites pass 'unchanged from pre-change baseline' and capture the real baseline at implementation time rather than hard-coding counts."
+    },
+    {
+      "id": "NIT-4",
+      "severity": "NIT",
+      "title": "Shared fast-check test helper must not match the tests/**/*.test.ts include",
+      "where": "design.md Files to create + tasks.md 5.1",
+      "fix": "Note that any shared test helper is named without the .test.ts suffix (mirror the Kit's tests/fc-report.ts) so it is not collected as an empty suite."
+    }
+  ],
+  "reviewDoc": "C:\\Users\\ahmad\\ghostsync\\.kiro\\specs\\file-capsules\\.review\\review.md"
+}
